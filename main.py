@@ -1,32 +1,25 @@
-from fastapi import FastAPI, Request, Depends, status, HTTPException
-from sqlalchemy.orm import Session
+from flask import Flask, request, jsonify
+import os
 from datetime import datetime
 from database import SessionLocal, init_db, Guardia, Ronda, PuntoRevision, Incidencia
 
-app = FastAPI(title="Kizeo Rondas Webhook", version="1.0")
+app = Flask(__name__)
 
-# Dependencia para obtener la sesión de base de datos en cada petición
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-@app.on_event("startup")
-def startup_event():
-    # Asegura que las tablas existan al iniciar el servidor
+# Inicializar base de datos al arrancar
+with app.app_context():
     init_db()
 
-@app.post("/webhook/kizeo")
-async def recibir_webhook_kizeo(request: Request, db: Session = Depends(get_db)):
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "API de Rondas Kizeo con Flask funcionando correctamente 🚀"})
+
+@app.route("/webhook/kizeo", methods=["POST"])
+def recibir_webhook_kizeo():
+    db = SessionLocal()
     try:
-        # Recibimos el JSON enviado por Kizeo Forms
-        payload = await request.json()
-        
-        # Nota: Dependiendo de cómo configures tu formulario en Kizeo,
-        # aquí mapearemos las llaves del JSON que llegan en 'payload'.
-        # Este es un esquema base de ejemplo:
+        payload = request.get_json()
+        if not payload:
+            return jsonify({"error": "No JSON payload provided"}), 400
         
         rut_guardia = payload.get("rut_guardia")
         nombre_guardia = payload.get("nombre_guardia", "Guardia Desconocido")
@@ -52,21 +45,19 @@ async def recibir_webhook_kizeo(request: Request, db: Session = Depends(get_db))
         db.commit()
         db.refresh(nueva_ronda)
         
-        # 3. Procesar puntos de marcación / revisión (si vienen en una lista en el JSON)
-        puntos_enviados = payload.get("puntos", [])
-        for p in puntos_enviados:
+        # 3. Procesar puntos de marcación
+        for p in payload.get("puntos", []):
             punto = PuntoRevision(
                 ronda_id=nueva_ronda.id,
                 nombre_punto=p.get("nombre", "Punto sin nombre"),
-                hora_escaneo=datetime.utcnow(), # o parsear la fecha de Kizeo
+                hora_escaneo=datetime.utcnow(),
                 latitud=p.get("lat"),
                 longitud=p.get("lon")
             )
             db.add(punto)
             
-        # 4. Registrar incidencias si las hay
-        incidencias_enviadas = payload.get("incidencias", [])
-        for inc in incidencias_enviadas:
+        # 4. Registrar incidencias
+        for inc in payload.get("incidencias", []):
             incidencia = Incidencia(
                 ronda_id=nueva_ronda.id,
                 descripcion=inc.get("descripcion", ""),
@@ -75,13 +66,13 @@ async def recibir_webhook_kizeo(request: Request, db: Session = Depends(get_db))
             db.add(incidencia)
             
         db.commit()
-        
-        return {"status": "success", "message": "Ronda procesada y guardada correctamente", "ronda_id": nueva_ronda.id}
+        return jsonify({"status": "success", "message": "Ronda procesada correctamente", "ronda_id": nueva_ronda.id}), 200
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        return jsonify({"error": str(e)}), 400
+    finally:
+        db.close()
 
-@app.get("/")
-def home():
-    return {"message": "API de Rondas Kizeo funcionando correctamente 🚀"}
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
