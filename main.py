@@ -1,73 +1,52 @@
-from flask import Flask, request, jsonify
 import os
-from datetime import datetime
-from database import SessionLocal, init_db, Guardia, Ronda, PuntoRevision, Incidencia
+import json
+from flask import Flask, request, jsonify
+from database import db, ReporteKizeo
 
 app = Flask(__name__)
 
-with app.app_context():
-    init_db()
+# Configuración de la base de datos PostgreSQL usando la URL de Render
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-@app.route("/", methods=["GET"])
+# Inicializar la base de datos con la app
+db.init_app(app)
+
+# Crear las tablas automáticamente en PostgreSQL al iniciar
+with app.app_context():
+    db.create_all()
+
+@app.route('/')
 def home():
     return jsonify({"message": "API de Rondas Kizeo con Flask funcionando correctamente 🚀"})
 
-@app.route("/webhook/kizeo", methods=["POST"])
-def recibir_webhook_kizeo():
-    db = SessionLocal()
+@app.route('/api/webhook', methods=['POST'])
+def recibir_webhook():
     try:
-        payload = request.get_json()
-        if not payload:
-            return jsonify({"error": "No JSON payload provided"}), 400
+        content = request.json
+        if not content:
+            return jsonify({"error": "No se recibieron datos"}), 400
 
-        rut_guardia = payload.get("rut_guardia")
-        nombre_guardia = payload.get("nombre_guardia", "Guardia Desconocido")
-        sucursal = payload.get("sucursal", "Sucursal General")
-        observaciones = payload.get("observaciones", "")
-
-        guardia = db.query(Guardia).filter(Guardia.rut == rut_guardia).first()
-        if not guardia:
-            guardia = Guardia(nombre=nombre_guardia, rut=rut_guardia)
-            db.add(guardia)
-            db.commit()
-            db.refresh(guardia)
-
-        nueva_ronda = Ronda(
-            guardia_id=guardia.id,
-            sucursal=sucursal,
-            fecha_hora=datetime.utcnow(),
-            observaciones_generales=observaciones
+        # Extraer campos básicos del JSON enviado por Kizeo Forms
+        form_id = content.get('form_id')
+        usuario = content.get('user', {}).get('login', 'Desconocido')
+        fecha = content.get('update_time')
+        
+        # Guardar el registro completo en la base de datos PostgreSQL
+        nuevo_reporte = ReporteKizeo(
+            form_id=str(form_id) if form_id else None,
+            usuario=str(usuario),
+            fecha_envio=str(fecha) if fecha else None,
+            datos_json=json.dumps(content)
         )
-        db.add(nueva_ronda)
-        db.commit()
-        db.refresh(nueva_ronda)
+        
+        db.session.add(nuevo_reporte)
+        db.session.commit()
 
-        for p in payload.get("puntos", []):
-            punto = PuntoRevision(
-                ronda_id=nueva_ronda.id,
-                nombre_punto=p.get("nombre", "Punto sin nombre"),
-                hora_escaneo=datetime.utcnow(),
-                latitud=p.get("lat"),
-                longitud=p.get("lon")
-            )
-            db.add(punto)
-
-        for inc in payload.get("incidencias", []):
-            incidencia = Incidencia(
-                ronda_id=nueva_ronda.id,
-                descripcion=inc.get("descripcion", ""),
-                foto_url=inc.get("foto_url")
-            )
-            db.add(incidencia)
-
-        db.commit()
-        return jsonify({"status": "success", "message": "Ronda procesada correctamente", "ronda_id": nueva_ronda.id}), 200
+        return jsonify({"status": "success", "message": "Reporte guardado correctamente en PostgreSQL"}), 200
 
     except Exception as e:
-        db.rollback()
-        return jsonify({"error": str(e)}), 400
-    finally:
-        db.close()
+        return jsonify({"status": "error", "message": str(e)}), 500
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
