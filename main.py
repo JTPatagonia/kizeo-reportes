@@ -5,14 +5,11 @@ from database import db, ReporteKizeo
 
 app = Flask(__name__)
 
-# Configuración de la base de datos PostgreSQL usando la URL de Render
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Inicializar la base de datos con la app
 db.init_app(app)
 
-# Crear las tablas automáticamente en PostgreSQL al iniciar
 with app.app_context():
     db.create_all()
 
@@ -27,12 +24,10 @@ def recibir_webhook():
         if not content:
             return jsonify({"error": "No se recibieron datos"}), 400
 
-        # Extraer campos básicos del JSON enviado por Kizeo Forms
         form_id = content.get('form_id')
         usuario = content.get('user', {}).get('login', 'Desconocido')
         fecha = content.get('update_time')
         
-        # Guardar el registro completo en la base de datos PostgreSQL
         nuevo_reporte = ReporteKizeo(
             form_id=str(form_id) if form_id else None,
             usuario=str(usuario),
