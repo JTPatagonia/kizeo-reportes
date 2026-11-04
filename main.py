@@ -10,8 +10,13 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 
+# Proteger el arranque para que no tire abajo al worker si hay un detalle con la BD
 with app.app_context():
-    db.create_all()
+    try:
+        db.create_all()
+        print("¡Tablas creadas o verificadas con éxito en PostgreSQL!")
+    except Exception as e:
+        print(f"Aviso de conexión a base de datos en inicio: {e}")
 
 @app.route('/')
 def home():
