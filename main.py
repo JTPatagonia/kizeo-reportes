@@ -5,7 +5,6 @@ from database import SessionLocal, init_db, Guardia, Ronda, PuntoRevision, Incid
 
 app = Flask(__name__)
 
-# Inicializar base de datos al arrancar
 with app.app_context():
     init_db()
 
@@ -20,21 +19,19 @@ def recibir_webhook_kizeo():
         payload = request.get_json()
         if not payload:
             return jsonify({"error": "No JSON payload provided"}), 400
-        
+
         rut_guardia = payload.get("rut_guardia")
         nombre_guardia = payload.get("nombre_guardia", "Guardia Desconocido")
         sucursal = payload.get("sucursal", "Sucursal General")
         observaciones = payload.get("observaciones", "")
-        
-        # 1. Buscar o crear al guardia
+
         guardia = db.query(Guardia).filter(Guardia.rut == rut_guardia).first()
         if not guardia:
             guardia = Guardia(nombre=nombre_guardia, rut=rut_guardia)
             db.add(guardia)
             db.commit()
             db.refresh(guardia)
-            
-        # 2. Registrar la ronda principal
+
         nueva_ronda = Ronda(
             guardia_id=guardia.id,
             sucursal=sucursal,
@@ -44,8 +41,7 @@ def recibir_webhook_kizeo():
         db.add(nueva_ronda)
         db.commit()
         db.refresh(nueva_ronda)
-        
-        # 3. Procesar puntos de marcación
+
         for p in payload.get("puntos", []):
             punto = PuntoRevision(
                 ronda_id=nueva_ronda.id,
@@ -55,8 +51,7 @@ def recibir_webhook_kizeo():
                 longitud=p.get("lon")
             )
             db.add(punto)
-            
-        # 4. Registrar incidencias
+
         for inc in payload.get("incidencias", []):
             incidencia = Incidencia(
                 ronda_id=nueva_ronda.id,
@@ -64,7 +59,7 @@ def recibir_webhook_kizeo():
                 foto_url=inc.get("foto_url")
             )
             db.add(incidencia)
-            
+
         db.commit()
         return jsonify({"status": "success", "message": "Ronda procesada correctamente", "ronda_id": nueva_ronda.id}), 200
 
