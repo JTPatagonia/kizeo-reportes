@@ -7,9 +7,8 @@ from flask_cors import CORS
 from database import db, ReporteKizeo
 
 app = Flask(__name__)
-CORS(app)  # Habilita CORS para conectar el panel HTML con la API en Render
+CORS(app)
 
-# Forzar el uso del driver psycopg2 para PostgreSQL
 database_url = os.getenv('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -21,42 +20,61 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 
-with app.app_context():
-    try:
-        db.create_all()
-        print("¡Tablas creadas o verificadas con éxito en PostgreSQL!")
-    except Exception as e:
-        print(f"Aviso de conexión a base de datos en inicio: {e}")
+# Definir el modelo de la Base de Datos para las Instalaciones y sus Rondas
+class InstalacionDB(db.Model):
+    __tablename__ = 'instalacion_db'
+    id = db.Column(db.Integer, primary_key=True)
+    nombre = db.Column(db.String(150), unique=True, nullable=False)
+    comuna = db.Column(db.String(100), nullable=False)
+    lat = db.Column(db.Float, nullable=False)
+    lng = db.Column(db.Float, nullable=False)
+    rondas = db.Column(db.Integer, default=0)
+    meta_rondas = db.Column(db.Integer, default=5)
 
-# Memoria de instalaciones con su meta total por turno y contador automático
-instalaciones_memoria = [
-    { "id": 1, "nombre": "RONDA - ARAMARK ACONCAGUA", "comuna": "Colina", "lat": -33.2000, "lng": -70.6700, "rondas": 0, "meta_rondas": 5 },
-    { "id": 2, "nombre": "RONDA - ARAMARK CONCEPCION", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "rondas": 0, "meta_rondas": 5 },
-    { "id": 3, "nombre": "RONDA - DESCO", "comuna": "Pudahuel", "lat": -33.4312, "lng": -70.8012, "rondas": 0, "meta_rondas": 5 },
-    { "id": 4, "nombre": "RONDA - DITALCAR", "comuna": "Maipú", "lat": -33.5100, "lng": -70.7500, "rondas": 0, "meta_rondas": 5 },
-    { "id": 5, "nombre": "RONDA - GILI", "comuna": "San Bernardo", "lat": -33.5900, "lng": -70.7000, "rondas": 0, "meta_rondas": 5 },
-    { "id": 6, "nombre": "RONDA - ICESTAR PUDAHUEL", "comuna": "Pudahuel", "lat": -33.4111, "lng": -70.7922, "rondas": 0, "meta_rondas": 5 },
-    { "id": 7, "nombre": "RONDA - ICESTAR QUILICURA", "comuna": "Quilicura", "lat": -33.3666, "lng": -70.7333, "rondas": 0, "meta_rondas": 5 },
-    { "id": 8, "nombre": "RONDA - MEGAFRIO RENCA", "comuna": "Renca", "lat": -33.4034, "lng": -70.7185, "rondas": 0, "meta_rondas": 5 },
-    { "id": 9, "nombre": "RONDA - UNIPACK", "comuna": "Conchalí", "lat": -33.3800, "lng": -70.6700, "rondas": 0, "meta_rondas": 5 },
-    { "id": 10, "nombre": "RONDA PRUEBA FINAL", "comuna": "Huechuraba", "lat": -33.3700, "lng": -70.6300, "rondas": 0, "meta_rondas": 5 }
-]
+with app.app_context():
+    db.create_all()
+    # Inicializar las instalaciones por defecto si la tabla está vacía
+    if InstalacionDB.query.count() == 0:
+        iniciales = [
+            { "nombre": "RONDA - ARAMARK ACONCAGUA", "comuna": "Colina", "lat": -33.2000, "lng": -70.6700, "rondas": 0, "meta_rondas": 5 },
+            { "nombre": "RONDA - ARAMARK CONCEPCION", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "rondas": 0, "meta_rondas": 5 },
+            { "nombre": "RONDA - DESCO", "comuna": "Pudahuel", "lat": -33.4312, "lng": -70.8012, "rondas": 0, "meta_rondas": 5 },
+            { "nombre": "RONDA - DITALCAR", "comuna": "Maipú", "lat": -33.5100, "lng": -70.7500, "rondas": 0, "meta_rondas": 5 },
+            { "nombre": "RONDA - GILI", "comuna": "San Bernardo", "lat": -33.5900, "lng": -70.7000, "rondas": 0, "meta_rondas": 5 },
+            { "nombre": "RONDA - ICESTAR PUDAHUEL", "comuna": "Pudahuel", "lat": -33.4111, "lng": -70.7922, "rondas": 0, "meta_rondas": 5 },
+            { "nombre": "RONDA - ICESTAR QUILICURA", "comuna": "Quilicura", "lat": -33.3666, "lng": -70.7333, "rondas": 0, "meta_rondas": 5 },
+            { "nombre": "RONDA - MEGAFRIO RENCA", "comuna": "Renca", "lat": -33.4034, "lng": -70.7185, "rondas": 0, "meta_rondas": 5 },
+            { "nombre": "RONDA - UNIPACK", "comuna": "Conchalí", "lat": -33.3800, "lng": -70.6700, "rondas": 0, "meta_rondas": 5 },
+            { "nombre": "RONDA PRUEBA FINAL", "comuna": "Huechuraba", "lat": -33.3700, "lng": -70.6300, "rondas": 0, "meta_rondas": 5 }
+        ]
+        for data in iniciales:
+            inst = InstalacionDB(**data)
+            db.session.add(inst)
+        db.session.commit()
+        print("¡Instalaciones iniciales guardadas en PostgreSQL!")
 
 @app.route('/')
 def home():
     return render_template('index.html')
 
-# Ruta que entrega el estado actual de las instalaciones al panel web
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
     try:
-        # Revisa correos automáticamente cada vez que alguien abre o actualiza el panel
         verificar_correos_kizeo()
-        return jsonify(instalaciones_memoria), 200
+        instalaciones = InstalacionDB.query.all()
+        resultado = [{
+            "id": i.id,
+            "nombre": i.nombre,
+            "comuna": i.comuna,
+            "lat": i.lat,
+            "lng": i.lng,
+            "rondas": i.rondas,
+            "meta_rondas": i.meta_rondas
+        } for i in instalaciones]
+        return jsonify(resultado), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Ruta para actualizar la meta total de rondas de una instalación desde la tabla
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
     try:
@@ -64,16 +82,15 @@ def actualizar_meta():
         inst_id = data.get('id')
         nueva_meta = data.get('meta_rondas')
 
-        for inst in instalaciones_memoria:
-            if inst['id'] == int(inst_id):
-                if nueva_meta is not None:
-                    inst['meta_rondas'] = int(nueva_meta)
-                return jsonify({"status": "success"}), 200
+        inst = InstalacionDB.query.get(inst_id)
+        if inst and nueva_meta is not None:
+            inst.meta_rondas = int(nueva_meta)
+            db.session.commit()
+            return jsonify({"status": "success"}), 200
         return jsonify({"error": "No encontrada"}), 404
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Función mejorada para leer automáticamente los correos de Kizeo
 def verificar_correos_kizeo():
     try:
         mail_server = os.getenv('MAIL_SERVER', 'imap.gmail.com')
@@ -87,7 +104,6 @@ def verificar_correos_kizeo():
         mail.login(mail_user, mail_password)
         mail.select('inbox')
 
-        # Buscar correos no leídos que contengan "RONDA" en el asunto
         status, messages = mail.search(None, '(UNSEEN SUBJECT "RONDA")')
         
         for num in messages[0].split():
@@ -106,18 +122,17 @@ def verificar_correos_kizeo():
                         cuerpo = msg.get_payload(decode=True).decode()
 
                     texto_completo = f"{asunto} {cuerpo}"
-                    print(f"Correo analizado: {asunto}")
 
-                    # Comprobar a qué instalación pertenece el correo y sumar +1 ronda automáticamente
-                    for inst in instalaciones_memoria:
-                        nombre_limpio = inst['nombre'].replace("RONDA - ", "").strip().lower()
-                        if nombre_limpio in texto_completo.lower() or inst['nombre'].lower() in texto_completo.lower():
-                            if inst['rondas'] < inst['meta_rondas']:
-                                inst['rondas'] += 1
-                                print(f"¡Ronda sumada para {inst['nombre']}! Total: {inst['rondas']}/{inst['meta_rondas']}")
+                    instalaciones = InstalacionDB.query.all()
+                    for inst in instalaciones:
+                        nombre_limpio = inst.nombre.replace("RONDA - ", "").strip().lower()
+                        if nombre_limpio in texto_completo.lower() or inst.nombre.lower() in texto_completo.lower():
+                            if inst.rondas < inst.meta_rondas:
+                                inst.rondas += 1
+                                db.session.commit()
+                                print(f"¡Ronda sumada en BD para {inst.nombre}! Total: {inst.rondas}/{inst.meta_rondas}")
                             break
 
-            # Marcar el correo como leído para no procesarlo dos veces
             mail.store(num, '+FLAGS', '\\Seen')
 
         mail.logout()
@@ -137,13 +152,20 @@ def recibir_webhook():
         usuario = content.get('user', {}).get('login', 'Desconocido')
         fecha = content.get('update_time')
         
+        form_name = content.get('form_name', '')
+        instalaciones = InstalacionDB.query.all()
+        for inst in instalaciones:
+            if inst.nombre.lower() in form_name.lower():
+                if inst.rondas < inst.meta_rondas:
+                    inst.rondas += 1
+                    db.session.commit()
+
         nuevo_reporte = ReporteKizeo(
             form_id=str(form_id) if form_id else None,
             usuario=str(usuario),
             fecha_envio=str(fecha) if fecha else None,
             datos_json=json.dumps(content)
         )
-        
         db.session.add(nuevo_reporte)
         db.session.commit()
 
