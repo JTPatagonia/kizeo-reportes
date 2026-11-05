@@ -95,11 +95,11 @@ def verificar_y_actualizar_turnos():
 def home():
     return render_template('index.html')
 
-# Ruta para el panel que carga rápido sin bloquearse con IMAP
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
     try:
         verificar_y_actualizar_turnos()
+        verificar_correos_kizeo()
         instalaciones = InstalacionDB.query.all()
         resultado = [{
             "id": i.id,
@@ -112,15 +112,6 @@ def obtener_estado_instalaciones():
             "turno": i.turno_activo
         } for i in instalaciones]
         return jsonify(resultado), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-# Ruta independiente para revisar correos de forma segura
-@app.route('/api/verificar-correo', methods=['GET'])
-def disparar_verificacion_correo():
-    try:
-        verificar_correos_kizeo()
-        return jsonify({"status": "success", "message": "Correos verificados"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -185,7 +176,7 @@ def verificar_correos_kizeo():
             return
 
         lista_ids = messages[0].split()
-        ultimos_ids = lista_ids[-20:] if len(lista_ids) > 20 else lista_ids
+        ultimos_ids = lista_ids[-25:] if len(lista_ids) > 25 else lista_ids
 
         for num in ultimos_ids:
             status, data = mail.fetch(num, '(RFC822)')
@@ -208,29 +199,40 @@ def verificar_correos_kizeo():
 
                     texto_completo = f"{asunto} {cuerpo}"
                     texto_limpio = limpiar_texto(texto_completo)
+                    msg_id = msg.get('Message-ID', str(num))
+                    existe_reporte = ReporteKizeo.query.filter_by(form_id=msg_id).first()
 
-                    if "ronda" in texto_limpio:
-                        instalaciones = InstalacionDB.query.all()
-                        for inst in instalaciones:
-                            nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
-                            if nombre_limpio in texto_limpio:
-                                msg_id = msg.get('Message-ID', str(num))
-                                existe_reporte = ReporteKizeo.query.filter_by(form_id=msg_id).first()
-                                
-                                if not existe_reporte:
+                    if not existe_reporte:
+                        # Si es un correo de Novedad o Alerta, se guarda en el historial como alerta pero NO suma rondas
+                        if "novedad" in texto_limpio or "alerta" in texto_limpio:
+                            nuevo_reporte = ReporteKizeo(
+                                form_id=msg_id,
+                                usuario="⚠️ ALERTA / NOVEDAD",
+                                fecha_envio=str(datetime.now()),
+                                datos_json=json.dumps({"tipo": "NOVEDAD", "asunto": asunto})
+                            )
+                            db.session.add(nuevo_reporte)
+                            db.session.commit()
+                        
+                        # Si es un correo de Ronda tradicional, procesa y suma
+                        elif "ronda" in texto_limpio:
+                            instalaciones = InstalacionDB.query.all()
+                            for inst in instalaciones:
+                                nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
+                                if nombre_limpio in texto_limpio:
                                     if inst.rondas < inst.meta_rondas:
                                         inst.rondas += 1
                                         db.session.commit()
 
                                     nuevo_reporte = ReporteKizeo(
                                         form_id=msg_id,
-                                        usuario="Kizeo Bot / Email",
+                                        usuario="Kizeo Bot / Ronda",
                                         fecha_envio=str(datetime.now()),
-                                        datos_json=json.dumps({"asunto": asunto, "instalacion": inst.nombre})
+                                        datos_json=json.dumps({"tipo": "RONDA", "asunto": asunto, "instalacion": inst.nombre})
                                     )
                                     db.session.add(nuevo_reporte)
                                     db.session.commit()
-                                break
+                                    break
 
         mail.logout()
     except Exception as e:
@@ -253,16 +255,18 @@ def recibir_webhook():
         form_name = content.get('form_name', '')
         form_name_limpio = limpiar_texto(form_name)
         
-        instalaciones = InstalacionDB.query.all()
-        for inst in instalaciones:
-            nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
-            if nombre_limpio in form_name_limpio:
-                if inst.rondas < inst.meta_rondas:
-                    inst.rondas += 1
-                    db.session.commit()
+        if "novedad" not in form_name_limpio and "alerta" not in form_name_limpio:
+            instalaciones = InstalacionDB.query.all()
+            for inst in instalaciones:
+                nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
+                if nombre_limpio in form_name_limpio:
+                    if inst.rondas < inst.meta_rondas:
+                        inst.rondas += 1
+                        db.session.commit()
 
         existe = ReporteKizeo.query.filter_by(form_id=form_id).first() if form_id else None
         if not existe:
+            tipo_rep = "NOVEDAD" if ("novedad" in form_name_limpio or "alerta" in form_name_limpio) else "RONDA"
             nuevo_reporte = ReporteKizeo(
                 form_id=form_id if form_id else None,
                 usuario=str(usuario),
