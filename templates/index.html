@@ -112,9 +112,7 @@
         }).addTo(map);
 
         let markersLayer = L.layerGroup().addTo(map);
-
-        // URL de tu API desplegada en Render
-        const API_URL = "https://kizeo-reportes.onrender.com/api/estado-instalaciones";
+        const API_URL = "/api/estado-instalaciones";
 
         async function cargarDatosEnVivo() {
             try {
@@ -162,11 +160,10 @@
                 }
 
             } catch (error) {
-                console.log("Esperando conexión con el servidor en Render...", error);
+                console.log("Esperando conexión con el servidor...", error);
             }
         }
 
-        // Consultar datos al iniciar y luego cada 10 segundos automáticamente
         cargarDatosEnVivo();
         setInterval(cargarDatosEnVivo, 10000);
 
