@@ -2,6 +2,7 @@ import os
 import json
 import imaplib
 import email
+import re
 from datetime import datetime
 import pytz
 from flask import Flask, request, jsonify, render_template
@@ -35,14 +36,11 @@ class InstalacionDB(db.Model):
 
 with app.app_context():
     db.create_all()
-    
-    # Asegurar que la columna turno_activo exista en bases de datos ya creadas previamente
     try:
         db.session.execute(db.text('ALTER TABLE instalacion_db ADD COLUMN IF NOT EXISTS turno_activo VARCHAR(50);'))
         db.session.commit()
     except Exception as e:
         db.session.rollback()
-        print(f"Aviso de migración de columna: {e}")
 
     if InstalacionDB.query.count() == 0:
         iniciales = [
@@ -61,6 +59,14 @@ with app.app_context():
             inst = InstalacionDB(**data)
             db.session.add(inst)
         db.session.commit()
+
+def limpiar_texto(texto):
+    """Elimina emojis, caracteres especiales y normaliza el texto para comparar sin errores"""
+    if not texto:
+        return ""
+    # Remueve emojis y símbolos usando expresiones regulares de unicode
+    texto_sin_emojis = re.sub(r'[^\w\s]', '', texto, flags=re.UNICODE)
+    return texto_sin_emojis.lower().strip()
 
 def obtener_turno_actual():
     chile_tz = pytz.timezone('America/Santiago')
@@ -170,34 +176,43 @@ def verificar_correos_kizeo():
         mail.login(mail_user, mail_password)
         mail.select('inbox')
 
-        status, messages = mail.search(None, '(UNSEEN SUBJECT "RONDA")')
+        # Buscar todos los correos no leídos que contengan la palabra RONDA en general
+        status, messages = mail.search(None, '(UNSEEN)')
         
         for num in messages[0].split():
             status, data = mail.fetch(num, '(RFC822)')
             for response_part in data:
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
-                    asunto = msg['subject']
+                    asunto = msg['subject'] or ""
                     
                     cuerpo = ""
                     if msg.is_multipart():
                         for part in msg.walk():
                             if part.get_content_type() == "text/plain":
-                                cuerpo = part.get_payload(decode=True).decode()
+                                payload = part.get_payload(decode=True)
+                                if payload:
+                                    cuerpo = payload.decode(errors='ignore')
                     else:
-                        cuerpo = msg.get_payload(decode=True).decode()
+                        payload = msg.get_payload(decode=True)
+                        if payload:
+                            cuerpo = payload.decode(errors='ignore')
 
-                    texto_completo = f"{asunto} {cuerpo}"
+                    # Limpiar asunto y cuerpo eliminando emojis y símbolos especiales
+                    texto_limpio = limpiar_texto(f"{asunto} {cuerpo}")
 
-                    instalaciones = InstalacionDB.query.all()
-                    for inst in instalaciones:
-                        nombre_limpio = inst.nombre.replace("RONDA - ", "").strip().lower()
-                        if nombre_limpio in texto_completo.lower() or inst.nombre.lower() in texto_completo.lower():
-                            if inst.rondas < inst.meta_rondas:
-                                inst.rondas += 1
-                                db.session.commit()
-                            break
+                    if "ronda" in texto_limpio:
+                        instalaciones = InstalacionDB.query.all()
+                        for inst in instalaciones:
+                            nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
+                            if nombre_limpio in texto_limpio:
+                                if inst.rondas < inst.meta_rondas:
+                                    inst.rondas += 1
+                                    db.session.commit()
+                                    print(f"¡Ronda sumada con éxito para {inst.nombre}!")
+                                break
 
+            # Marcar el correo como leído
             mail.store(num, '+FLAGS', '\\Seen')
 
         mail.logout()
@@ -219,9 +234,12 @@ def recibir_webhook():
         fecha = content.get('update_time')
         
         form_name = content.get('form_name', '')
+        form_name_limpio = limpiar_texto(form_name)
+        
         instalaciones = InstalacionDB.query.all()
         for inst in instalaciones:
-            if inst.nombre.lower() in form_name.lower():
+            nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
+            if nombre_limpio in form_name_limpio:
                 if inst.rondas < inst.meta_rondas:
                     inst.rondas += 1
                     db.session.commit()
