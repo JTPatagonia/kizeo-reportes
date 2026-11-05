@@ -95,7 +95,6 @@ def verificar_y_actualizar_turnos():
 def home():
     return render_template('index.html')
 
-# Ruta de estado rápida que NUNCA se bloquea con IMAP
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
     try:
@@ -115,7 +114,6 @@ def obtener_estado_instalaciones():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Ruta independiente para sincronizar correos sin afectar el mapa
 @app.route('/api/verificar-correo', methods=['GET'])
 def disparar_verificacion_correo():
     try:
@@ -185,7 +183,7 @@ def verificar_correos_kizeo():
             return
 
         lista_ids = messages[0].split()
-        ultimos_ids = lista_ids[-25:] if len(lista_ids) > 25 else lista_ids
+        ultimos_ids = lista_ids[-30:] if len(lista_ids) > 30 else lista_ids
 
         for num in ultimos_ids:
             status, data = mail.fetch(num, '(RFC822)')
@@ -193,7 +191,11 @@ def verificar_correos_kizeo():
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
                     asunto = msg['subject'] or ""
+                    remitente = msg['from'] or ""
                     
+                    if "google" in remitente.lower() or "security" in remitente.lower() or "alerta de seguridad" in asunto.lower():
+                        continue
+
                     cuerpo = ""
                     if msg.is_multipart():
                         for part in msg.walk():
@@ -212,7 +214,7 @@ def verificar_correos_kizeo():
                     existe_reporte = ReporteKizeo.query.filter_by(form_id=msg_id).first()
 
                     if not existe_reporte:
-                        if "novedad" in texto_limpio or "alerta" in texto_limpio:
+                        if "novedad" in texto_limpio or "registran novedades" in texto_limpio or "alerta" in texto_limpio:
                             nuevo_reporte = ReporteKizeo(
                                 form_id=msg_id,
                                 usuario="⚠️ NOVEDAD / ALERTA",
@@ -221,11 +223,14 @@ def verificar_correos_kizeo():
                             )
                             db.session.add(nuevo_reporte)
                             db.session.commit()
+                        
                         elif "ronda" in texto_limpio:
                             instalaciones = InstalacionDB.query.all()
                             for inst in instalaciones:
-                                nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
-                                if nombre_limpio in texto_limpio:
+                                palabras_clave = [limpiar_texto(p) for p in inst.nombre.replace("RONDA - ", "").split() if len(p) > 3]
+                                coincide = any(palabra in texto_limpio for palabra in palabras_clave)
+                                
+                                if coincide:
                                     if inst.rondas < inst.meta_rondas:
                                         inst.rondas += 1
                                         db.session.commit()
@@ -263,8 +268,9 @@ def recibir_webhook():
         if "novedad" not in form_name_limpio and "alerta" not in form_name_limpio:
             instalaciones = InstalacionDB.query.all()
             for inst in instalaciones:
-                nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
-                if nombre_limpio in form_name_limpio:
+                palabras_clave = [limpiar_texto(p) for p in inst.nombre.replace("RONDA - ", "").split() if len(p) > 3]
+                coincide = any(palabra in form_name_limpio for palabra in palabras_clave)
+                if coincide:
                     if inst.rondas < inst.meta_rondas:
                         inst.rondas += 1
                         db.session.commit()
