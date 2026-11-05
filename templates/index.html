@@ -20,11 +20,12 @@
             70% { transform: scale(1.25); box-shadow: 0 0 0 12px rgba(220, 53, 69, 0); }
             100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
         }
-        .marker-critico {
-            background-color: #dc3545; color: white; width: 24px; height: 24px;
-            border-radius: 50%; display: flex; align-items: center; justify-content: center;
-            border: 2px solid white; animation: alertPulse 1.2s infinite; font-size: 10px; font-weight: bold;
+        .marker-triangulo {
+            color: white; width: 26px; height: 26px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 11px; font-weight: bold; filter: drop-shadow(0 0 3px rgba(0,0,0,0.7));
         }
+        .marker-critico { animation: alertPulse 1.2s infinite; }
         @keyframes emergencyFlash {
             0% { background-color: rgba(220, 53, 69, 0.9); }
             50% { background-color: rgba(255, 255, 255, 0.2); }
@@ -55,11 +56,11 @@
             <div class="col-lg-8">
                 <div class="card card-custom p-3 shadow-sm mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM) — <small class="text-warning fs-6">Arrastra cualquier marcador para ajustar su dirección exacta</small></h5>
+                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM) — <small class="text-warning fs-6">Arrastra cualquier marcador para ajustar su dirección</small></h5>
                         <div class="d-flex gap-3">
-                            <span class="small"><span class="badge-dot bg-danger"></span> 0 Avance</span>
-                            <span class="small"><span class="badge-dot bg-warning"></span> En Proceso</span>
-                            <span class="small"><span class="badge-dot bg-success"></span> Meta Completa</span>
+                            <span class="small"><i class="fa-solid fa-triangle-exclamation text-danger"></i> 0 Avance</span>
+                            <span class="small"><i class="fa-solid fa-triangle-exclamation text-warning"></i> En Proceso</span>
+                            <span class="small"><i class="fa-solid fa-triangle-exclamation text-success"></i> Meta Completa</span>
                         </div>
                     </div>
                     <div id="map"></div>
@@ -147,27 +148,30 @@
                 let criticos = false;
 
                 instalaciones.forEach(inst => {
-                    let color = '#dc3545';
+                    let colorHex = '#dc3545'; // Rojo por defecto (0)
+                    let extraClass = 'marker-critico';
+
                     if (inst.rondas >= inst.meta_rondas) {
-                        color = '#198754';
+                        colorHex = '#198754'; // Verde si completó la meta
+                        extraClass = '';
                     } else if (inst.rondas > 0) {
-                        color = '#ffc107';
-                    }
-
-                    let customIcon;
-                    if (inst.rondas === 0) {
-                        criticos = true;
-                        customIcon = L.divIcon({ html: `<div class="marker-critico"><i class="fa-solid fa-triangle-exclamation"></i></div>`, className: '', iconSize: [24, 24] });
+                        colorHex = '#ffc107'; // Amarillo/Naranja si va en curso
+                        extraClass = '';
                     } else {
-                        customIcon = L.divIcon({ html: `<div style="background-color: ${color}; width: 18px; height: 18px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 8px rgba(0,0,0,0.6);"></div>`, className: '', iconSize: [18, 18] });
+                        criticos = true;
                     }
 
-                    // Marcador con opción de arrastrar (draggable: true)
+                    // Todos usan el icono de triángulo de emergencia con su respectivo color
+                    const customIcon = L.divIcon({ 
+                        html: `<div class="marker-triangulo ${extraClass}" style="color: ${colorHex};"><i class="fa-solid fa-triangle-exclamation fa-lg"></i></div>`, 
+                        className: '', 
+                        iconSize: [26, 26],
+                        iconAnchor: [13, 13]
+                    });
+
                     const marker = L.marker([inst.lat, inst.lng], { icon: customIcon, draggable: true });
-                    
                     marker.bindPopup(`<b>${inst.nombre}</b><br>Comuna: ${inst.comuna}<br>Progreso: <b>${inst.rondas} / ${inst.meta_rondas}</b> rondas<br><small class="text-info">💡 Arrastra este punto a su dirección exacta</small>`);
                     
-                    // Evento al soltar el marcador en el mapa para guardar su nueva ubicación GPS
                     marker.on('dragend', async function(event) {
                         const position = marker.getLatLng();
                         await fetch('/api/actualizar-ubicacion', {
@@ -175,7 +179,6 @@
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ id: inst.id, lat: position.lat, lng: position.lng })
                         });
-                        console.log(`Ubicación actualizada para ${inst.nombre}: ${position.lat}, ${position.lng}`);
                     });
 
                     markersLayer.addLayer(marker);
