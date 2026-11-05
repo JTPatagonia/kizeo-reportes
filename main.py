@@ -186,68 +186,74 @@ def verificar_correos_kizeo():
         ultimos_ids = lista_ids[-30:] if len(lista_ids) > 30 else lista_ids
 
         for num in ultimos_ids:
-            status, data = mail.fetch(num, '(RFC822)')
-            for response_part in data:
-                if isinstance(response_part, tuple):
-                    msg = email.message_from_bytes(response_part[1])
-                    asunto = msg['subject'] or ""
-                    remitente = msg['from'] or ""
-                    
-                    if "google" in remitente.lower() or "security" in remitente.lower() or "alerta de seguridad" in asunto.lower():
-                        continue
-
-                    cuerpo = ""
-                    if msg.is_multipart():
-                        for part in msg.walk():
-                            if part.get_content_type() == "text/plain":
-                                payload = part.get_payload(decode=True)
-                                if payload:
-                                    cuerpo = payload.decode(errors='ignore')
-                    else:
-                        payload = msg.get_payload(decode=True)
-                        if payload:
-                            cuerpo = payload.decode(errors='ignore')
-
-                    texto_completo = f"{asunto} {cuerpo}"
-                    texto_limpio = limpiar_texto(texto_completo)
-                    msg_id = msg.get('Message-ID', str(num))
-                    existe_reporte = ReporteKizeo.query.filter_by(form_id=msg_id).first()
-
-                    if not existe_reporte:
-                        if "novedad" in texto_limpio or "registran novedades" in texto_limpio or "alerta" in texto_limpio:
-                            nuevo_reporte = ReporteKizeo(
-                                form_id=msg_id,
-                                usuario="⚠️ NOVEDAD / ALERTA",
-                                fecha_envio=str(datetime.now()),
-                                datos_json=json.dumps({"tipo": "NOVEDAD", "asunto": asunto})
-                            )
-                            db.session.add(nuevo_reporte)
-                            db.session.commit()
+            try:
+                status, data = mail.fetch(num, '(RFC822)')
+                if status != 'OK':
+                    continue
+                
+                for response_part in data:
+                    if isinstance(response_part, tuple):
+                        msg = email.message_from_bytes(response_part[1])
+                        asunto = msg['subject'] or ""
+                        remitente = msg['from'] or ""
                         
-                        elif "ronda" in texto_limpio:
-                            instalaciones = InstalacionDB.query.all()
-                            for inst in instalaciones:
-                                palabras_clave = [limpiar_texto(p) for p in inst.nombre.replace("RONDA - ", "").split() if len(p) > 3]
-                                coincide = any(palabra in texto_limpio for palabra in palabras_clave)
-                                
-                                if coincide:
-                                    if inst.rondas < inst.meta_rondas:
-                                        inst.rondas += 1
-                                        db.session.commit()
+                        if "google" in remitente.lower() or "security" in remitente.lower() or "alerta de seguridad" in asunto.lower():
+                            continue
 
-                                    nuevo_reporte = ReporteKizeo(
-                                        form_id=msg_id,
-                                        usuario="Kizeo Bot / Ronda",
-                                        fecha_envio=str(datetime.now()),
-                                        datos_json=json.dumps({"tipo": "RONDA", "asunto": asunto, "instalacion": inst.nombre})
-                                    )
-                                    db.session.add(nuevo_reporte)
-                                    db.session.commit()
-                                    break
+                        cuerpo = ""
+                        if msg.is_multipart():
+                            for part in msg.walk():
+                                if part.get_content_type() == "text/plain":
+                                    payload = part.get_payload(decode=True)
+                                    if payload:
+                                        cuerpo = payload.decode(errors='ignore')
+                        else:
+                            payload = msg.get_payload(decode=True)
+                            if payload:
+                                cuerpo = payload.decode(errors='ignore')
+
+                        texto_completo = f"{asunto} {cuerpo}"
+                        texto_limpio = limpiar_texto(texto_completo)
+                        msg_id = msg.get('Message-ID', str(num))
+                        existe_reporte = ReporteKizeo.query.filter_by(form_id=msg_id).first()
+
+                        if not existe_reporte:
+                            if "novedad" in texto_limpio or "registran novedades" in texto_limpio or "alerta" in texto_limpio:
+                                nuevo_reporte = ReporteKizeo(
+                                    form_id=msg_id,
+                                    usuario="⚠️ NOVEDAD / ALERTA",
+                                    fecha_envio=str(datetime.now()),
+                                    datos_json=json.dumps({"tipo": "NOVEDAD", "asunto": asunto})
+                                )
+                                db.session.add(nuevo_reporte)
+                                db.session.commit()
+                            
+                            elif "ronda" in texto_limpio:
+                                instalaciones = InstalacionDB.query.all()
+                                for inst in instalaciones:
+                                    palabras_clave = [limpiar_texto(p) for p in inst.nombre.replace("RONDA - ", "").split() if len(p) > 3]
+                                    coincide = any(palabra in texto_limpio for palabra in palabras_clave)
+                                    
+                                    if coincide:
+                                        if inst.rondas < inst.meta_rondas:
+                                            inst.rondas += 1
+                                            db.session.commit()
+
+                                        nuevo_reporte = ReporteKizeo(
+                                            form_id=msg_id,
+                                            usuario="Kizeo Bot / Ronda",
+                                            fecha_envio=str(datetime.now()),
+                                            datos_json=json.dumps({"tipo": "RONDA", "asunto": asunto, "instalacion": inst.nombre})
+                                        )
+                                        db.session.add(nuevo_reporte)
+                                        db.session.commit()
+                                        break
+            except Exception as mail_err:
+                continue
 
         mail.logout()
     except Exception as e:
-        print(f"Error al verificar correos: {e}")
+        print(f"Error general al verificar correos: {e}")
 
 @app.route('/api/webhook', methods=['POST'])
 def recibir_webhook():
