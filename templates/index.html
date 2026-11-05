@@ -40,7 +40,7 @@
     <nav class="navbar navbar-dark px-4 py-2">
         <div class="container-fluid">
             <span class="navbar-brand mb-0 h1 fw-bold">
-                <i class="fa-solid fa-shield-halved text-danger me-2"></i> CENTRAL DE MONITOREO 24/7 — REGIÓN METROPOLITANA
+                <i class="fa-solid fa-shield-halved text-danger me-2"></i> CENTRAL DE MONITOREO 24/7 — CAMBIO DE TURNO
             </span>
             <div class="d-flex align-items-center gap-3">
                 <span id="banner-alerta-global" class="badge bg-danger px-3 py-2 fs-6 d-none"><i class="fa-solid fa-triangle-exclamation me-1"></i> ¡HAY INSTALACIONES SIN RONDAS (0)!</span>
@@ -55,7 +55,7 @@
             <div class="col-lg-8">
                 <div class="card card-custom p-3 shadow-sm">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo de Rondas (RM)</h5>
+                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM)</h5>
                         <div class="d-flex gap-3">
                             <span class="small"><span class="badge-dot bg-danger"></span> 0 Rondas</span>
                             <span class="small"><span class="badge-dot bg-warning"></span> 1 Ronda</span>
@@ -78,19 +78,18 @@
                 </div>
 
                 <div class="card card-custom p-3 shadow-sm mb-3">
-                    <h5 class="fw-semibold mb-3"><i class="fa-solid fa-list-check text-info me-2"></i> Estado en Vivo (RM)</h5>
-                    <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                    <h5 class="fw-semibold mb-3"><i class="fa-solid fa-sliders text-warning me-2"></i> Control de Mando (Turno)</h5>
+                    <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
                         <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
                             <thead>
                                 <tr>
                                     <th>Instalación</th>
-                                    <th>Comuna</th>
-                                    <th>Rondas</th>
-                                    <th>Estado</th>
+                                    <th class="text-center">Rondas</th>
+                                    <th class="text-center">Acción Manual</th>
                                 </tr>
                             </thead>
-                            <tbody id="tabla-instalaciones">
-                                <!-- Se carga dinámicamente desde Flask/Render -->
+                            <tbody id="tabla-control-turno">
+                                <!-- Cargado dinámicamente -->
                             </tbody>
                         </table>
                     </div>
@@ -120,7 +119,7 @@
                 const instalaciones = await response.json();
                 
                 markersLayer.clearLayers();
-                const tbody = document.getElementById('tabla-instalaciones');
+                const tbody = document.getElementById('tabla-control-turno');
                 tbody.innerHTML = '';
                 let criticos = false;
 
@@ -135,21 +134,20 @@
                     }
 
                     const marker = L.marker([inst.lat, inst.lng], { icon: customIcon });
-                    marker.bindPopup(`<b>${inst.nombre}</b><br>Comuna: ${inst.comuna}<br>Rondas: <b>${inst.rondas} / 3</b>`);
+                    marker.bindPopup(`<b>${inst.nombre}</b><br>Comuna: ${inst.comuna}<br>Rondas actuales: <b>${inst.rondas}</b>`);
                     markersLayer.addLayer(marker);
-
-                    let badge = inst.rondas === 0 ? '<span class="badge bg-danger">Crítico (0)</span>' :
-                                (inst.rondas === 1 ? '<span class="badge bg-warning text-dark">Pendiente (1)</span>' :
-                                (inst.rondas === 2 ? '<span class="badge" style="background-color:#fd7e14;">Avanzado (2)</span>' : '<span class="badge bg-success">Completado (3)</span>'));
 
                     const row = document.createElement('tr');
                     if (inst.rondas === 0) row.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
-                    row.innerHTML = `<td><strong>${inst.nombre}</strong></td><td>${inst.comuna}</td><td class="text-center fw-bold">${inst.rondas}</td><td>${badge}</td>`;
-                    
-                    row.onclick = () => {
-                        map.setView([inst.lat, inst.lng], 14, { animate: true });
-                        marker.openPopup();
-                    };
+                    row.innerHTML = `
+                        <td><small class="fw-bold">${inst.nombre}</small></td>
+                        <td class="text-center fw-bold fs-6">${inst.rondas}</td>
+                        <td class="text-center">
+                            <button onclick="cambiarRondas(${inst.id}, 0)" class="btn btn-outline-danger btn-sm py-0 px-1" title="Resetear a 0">0</button>
+                            <button onclick="cambiarRondas(${inst.id}, 1)" class="btn btn-outline-warning btn-sm py-0 px-1" title="1 Ronda">1</button>
+                            <button onclick="cambiarRondas(${inst.id}, 3)" class="btn btn-outline-success btn-sm py-0 px-1" title="Completar">3</button>
+                        </td>
+                    `;
                     tbody.appendChild(row);
                 });
 
@@ -160,8 +158,17 @@
                 }
 
             } catch (error) {
-                console.log("Esperando conexión con el servidor...", error);
+                console.log("Esperando conexión...", error);
             }
+        }
+
+        async function cambiarRondas(id, nuevasRondas) {
+            await fetch('/api/actualizar-instalacion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id, rondas: nuevasRondas })
+            });
+            cargarDatosEnVivo();
         }
 
         cargarDatosEnVivo();
