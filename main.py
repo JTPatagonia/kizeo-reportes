@@ -2,6 +2,8 @@ import os
 import json
 import imaplib
 import email
+from datetime import datetime
+import pytz
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from database import db, ReporteKizeo
@@ -29,6 +31,7 @@ class InstalacionDB(db.Model):
     lng = db.Column(db.Float, nullable=False)
     rondas = db.Column(db.Integer, default=0)
     meta_rondas = db.Column(db.Integer, default=5)
+    turno_activo = db.Column(db.String(50), default="")
 
 with app.app_context():
     db.create_all()
@@ -50,6 +53,33 @@ with app.app_context():
             db.session.add(inst)
         db.session.commit()
 
+def obtener_turno_actual():
+    # Zona horaria de Chile para asegurar el cálculo exacto de las 20:00 y 08:00 hrs
+    chile_tz = pytz.timezone('America/Santiago')
+    ahora = datetime.now(chile_tz)
+    hora = ahora.hour
+    fecha_str = ahora.strftime('%Y-%m-%d')
+    
+    # Turno Noche: 20:00 a 08:00 hrs
+    if hora >= 20 or hora < 8:
+        # Si pasa medianoche, el turno noche pertenece técnicamente a la fecha de inicio o fecha base
+        if hora < 8:
+            fecha_str = (ahora - pytz.datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+        return f"NOCHE-{fecha_str}"
+    else:
+        # Turno Día: 08:00 a 20:00 hrs
+        return f"DIA-{fecha_str}"
+
+def verificar_y_actualizar_turnos():
+    turno_actual = obtener_turno_actual()
+    instalaciones = InstalacionDB.query.all()
+    for inst in instalaciones:
+        if inst.turno_activo != turno_actual:
+            # Cambio de turno detectado: se reinicia el contador actual y se actualiza el identificador de turno
+            inst.rondas = 0
+            inst.turno_activo = turno_actual
+            db.session.commit()
+
 @app.route('/')
 def home():
     return render_template('index.html')
@@ -57,6 +87,7 @@ def home():
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
     try:
+        verificar_y_actualizar_turnos()
         verificar_correos_kizeo()
         instalaciones = InstalacionDB.query.all()
         resultado = [{
@@ -66,7 +97,8 @@ def obtener_estado_instalaciones():
             "lat": i.lat,
             "lng": i.lng,
             "rondas": i.rondas,
-            "meta_rondas": i.meta_rondas
+            "meta_rondas": i.meta_rondas,
+            "turno": i.turno_activo
         } for i in instalaciones]
         return jsonify(resultado), 200
     except Exception as e:
@@ -103,7 +135,6 @@ def actualizar_meta():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Nueva ruta para actualizar las coordenadas GPS de la instalación al mover el marcador
 @app.route('/api/actualizar-ubicacion', methods=['POST'])
 def actualizar_ubicacion():
     try:
@@ -117,8 +148,8 @@ def actualizar_ubicacion():
             inst.lat = float(nueva_lat)
             inst.lng = float(nueva_lng)
             db.session.commit()
-            return jsonify({"status": "success", "message": "Ubicación actualizada con éxito"}), 200
-        return jsonify({"error": "Instalación no encontrada"}), 404
+            return jsonify({"status": "success"}), 200
+        return jsonify({"error": "No encontrada"}), 404
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -174,8 +205,9 @@ def recibir_webhook():
     try:
         content = request.json
         if not content:
-            return jsonify({"error": "No se recibieron datos"}), 400
+            return jsonify({"error": "Sin datos"}), 400
 
+        verificar_y_actualizar_turnos()
         verificar_correos_kizeo()
 
         form_id = content.get('form_id')
@@ -199,7 +231,7 @@ def recibir_webhook():
         db.session.add(nuevo_reporte)
         db.session.commit()
 
-        return jsonify({"status": "success", "message": "Reporte procesado y guardado en PostgreSQL"}), 200
+        return jsonify({"status": "success"}), 200
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
