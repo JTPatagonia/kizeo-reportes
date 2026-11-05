@@ -55,7 +55,7 @@
             <div class="col-lg-8">
                 <div class="card card-custom p-3 shadow-sm mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM)</h5>
+                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM) — <small class="text-warning fs-6">Arrastra cualquier marcador para ajustar su dirección exacta</small></h5>
                         <div class="d-flex gap-3">
                             <span class="small"><span class="badge-dot bg-danger"></span> 0 Avance</span>
                             <span class="small"><span class="badge-dot bg-warning"></span> En Proceso</span>
@@ -96,7 +96,6 @@
             </div>
         </div>
 
-        <!-- SECCIÓN DE HISTORIAL DE RONDAS PASADAS -->
         <div class="row">
             <div class="col-12">
                 <div class="card card-custom p-3 shadow-sm">
@@ -163,8 +162,22 @@
                         customIcon = L.divIcon({ html: `<div style="background-color: ${color}; width: 18px; height: 18px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 8px rgba(0,0,0,0.6);"></div>`, className: '', iconSize: [18, 18] });
                     }
 
-                    const marker = L.marker([inst.lat, inst.lng], { icon: customIcon });
-                    marker.bindPopup(`<b>${inst.nombre}</b><br>Comuna: ${inst.comuna}<br>Progreso: <b>${inst.rondas} / ${inst.meta_rondas}</b> rondas`);
+                    // Marcador con opción de arrastrar (draggable: true)
+                    const marker = L.marker([inst.lat, inst.lng], { icon: customIcon, draggable: true });
+                    
+                    marker.bindPopup(`<b>${inst.nombre}</b><br>Comuna: ${inst.comuna}<br>Progreso: <b>${inst.rondas} / ${inst.meta_rondas}</b> rondas<br><small class="text-info">💡 Arrastra este punto a su dirección exacta</small>`);
+                    
+                    // Evento al soltar el marcador en el mapa para guardar su nueva ubicación GPS
+                    marker.on('dragend', async function(event) {
+                        const position = marker.getLatLng();
+                        await fetch('/api/actualizar-ubicacion', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: inst.id, lat: position.lat, lng: position.lng })
+                        });
+                        console.log(`Ubicación actualizada para ${inst.nombre}: ${position.lat}, ${position.lng}`);
+                    });
+
                     markersLayer.addLayer(marker);
 
                     const row = document.createElement('tr');

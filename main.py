@@ -72,7 +72,6 @@ def obtener_estado_instalaciones():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Nueva ruta para consultar el historial de rondas pasadas almacenadas
 @app.route('/api/historial-rondas', methods=['GET'])
 def obtener_historial():
     try:
@@ -101,6 +100,25 @@ def actualizar_meta():
             db.session.commit()
             return jsonify({"status": "success"}), 200
         return jsonify({"error": "No encontrada"}), 404
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# Nueva ruta para actualizar las coordenadas GPS de la instalación al mover el marcador
+@app.route('/api/actualizar-ubicacion', methods=['POST'])
+def actualizar_ubicacion():
+    try:
+        data = request.json
+        inst_id = data.get('id')
+        nueva_lat = data.get('lat')
+        nueva_lng = data.get('lng')
+
+        inst = InstalacionDB.query.get(inst_id)
+        if inst and nueva_lat is not None and nueva_lng is not None:
+            inst.lat = float(nueva_lat)
+            inst.lng = float(nueva_lng)
+            db.session.commit()
+            return jsonify({"status": "success", "message": "Ubicación actualizada con éxito"}), 200
+        return jsonify({"error": "Instalación no encontrada"}), 404
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
