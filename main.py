@@ -61,10 +61,8 @@ with app.app_context():
         db.session.commit()
 
 def limpiar_texto(texto):
-    """Elimina emojis, caracteres especiales y normaliza el texto para comparar sin errores"""
     if not texto:
         return ""
-    # Remueve emojis y símbolos usando expresiones regulares de unicode
     texto_sin_emojis = re.sub(r'[^\w\s]', '', texto, flags=re.UNICODE)
     return texto_sin_emojis.lower().strip()
 
@@ -176,10 +174,17 @@ def verificar_correos_kizeo():
         mail.login(mail_user, mail_password)
         mail.select('inbox')
 
-        # Buscar todos los correos no leídos que contengan la palabra RONDA en general
-        status, messages = mail.search(None, '(UNSEEN)')
-        
-        for num in messages[0].split():
+        # Buscar todos los correos recientes (últimos 30) sin importar si están leídos
+        status, messages = mail.search(None, 'ALL')
+        if status != 'OK':
+            mail.logout()
+            return
+
+        lista_ids = messages[0].split()
+        # Tomar solo los últimos 30 correos para que sea rápido
+        ultimos_ids = lista_ids[-30:] if len(lista_ids) > 30 else lista_ids
+
+        for num in ultimos_ids:
             status, data = mail.fetch(num, '(RFC822)')
             for response_part in data:
                 if isinstance(response_part, tuple):
@@ -198,22 +203,36 @@ def verificar_correos_kizeo():
                         if payload:
                             cuerpo = payload.decode(errors='ignore')
 
-                    # Limpiar asunto y cuerpo eliminando emojis y símbolos especiales
-                    texto_limpio = limpiar_texto(f"{asunto} {cuerpo}")
+                    texto_completo = f"{asunto} {cuerpo}"
+                    texto_limpio = limpiar_texto(texto_completo)
 
+                    # Si el correo contiene la palabra ronda, revisamos qué instalación es
                     if "ronda" in texto_limpio:
                         instalaciones = InstalacionDB.query.all()
                         for inst in instalaciones:
                             nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
+                            # Validamos si el nombre de la instalación está presente en el correo
                             if nombre_limpio in texto_limpio:
-                                if inst.rondas < inst.meta_rondas:
-                                    inst.rondas += 1
-                                    db.session.commit()
-                                    print(f"¡Ronda sumada con éxito para {inst.nombre}!")
-                                break
+                                # Evitamos duplicados guardando el reporte en la BD si el Message-ID o contenido no existe
+                                msg_id = msg.get('Message-ID', str(num))
+                                existe_reporte = ReporteKizeo.query.filter_by(form_id=msg_id).first()
+                                
+                                if not existe_reporte:
+                                    if inst.rondas < inst.meta_rondas:
+                                        inst.rondas += 1
+                                        db.session.commit()
+                                        print(f"¡Ronda sumada automáticamente para {inst.nombre}!")
 
-            # Marcar el correo como leído
-            mail.store(num, '+FLAGS', '\\Seen')
+                                    # Registrar en el historial para que no se procese de nuevo
+                                    nuevo_reporte = ReporteKizeo(
+                                        form_id=msg_id,
+                                        usuario="Kizeo Bot / Email",
+                                        fecha_envio=str(datetime.now()),
+                                        datos_json=json.dumps({"asunto": asunto, "instalacion": inst.nombre})
+                                    )
+                                    db.session.add(nuevo_reporte)
+                                    db.session.commit()
+                                break
 
         mail.logout()
     except Exception as e:
@@ -229,7 +248,7 @@ def recibir_webhook():
         verificar_y_actualizar_turnos()
         verificar_correos_kizeo()
 
-        form_id = content.get('form_id')
+        form_id = str(content.get('form_id', ''))
         usuario = content.get('user', {}).get('login', 'Desconocido')
         fecha = content.get('update_time')
         
@@ -244,14 +263,16 @@ def recibir_webhook():
                     inst.rondas += 1
                     db.session.commit()
 
-        nuevo_reporte = ReporteKizeo(
-            form_id=str(form_id) if form_id else None,
-            usuario=str(usuario),
-            fecha_envio=str(fecha) if fecha else None,
-            datos_json=json.dumps(content)
-        )
-        db.session.add(nuevo_reporte)
-        db.session.commit()
+        existe = ReporteKizeo.query.filter_by(form_id=form_id).first() if form_id else None
+        if not existe:
+            nuevo_reporte = ReporteKizeo(
+                form_id=form_id if form_id else None,
+                usuario=str(usuario),
+                fecha_envio=str(fecha) if fecha else None,
+                datos_json=json.dumps(content)
+            )
+            db.session.add(nuevo_reporte)
+            db.session.commit()
 
         return jsonify({"status": "success"}), 200
 
