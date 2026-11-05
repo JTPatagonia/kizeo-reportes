@@ -35,6 +35,15 @@ class InstalacionDB(db.Model):
 
 with app.app_context():
     db.create_all()
+    
+    # Asegurar que la columna turno_activo exista en bases de datos ya creadas previamente
+    try:
+        db.session.execute(db.text('ALTER TABLE instalacion_db ADD COLUMN IF NOT EXISTS turno_activo VARCHAR(50);'))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"Aviso de migración de columna: {e}")
+
     if InstalacionDB.query.count() == 0:
         iniciales = [
             { "nombre": "RONDA - ARAMARK ACONCAGUA", "comuna": "Colina", "lat": -33.2000, "lng": -70.6700, "rondas": 0, "meta_rondas": 5 },
@@ -54,20 +63,16 @@ with app.app_context():
         db.session.commit()
 
 def obtener_turno_actual():
-    # Zona horaria de Chile para asegurar el cálculo exacto de las 20:00 y 08:00 hrs
     chile_tz = pytz.timezone('America/Santiago')
     ahora = datetime.now(chile_tz)
     hora = ahora.hour
     fecha_str = ahora.strftime('%Y-%m-%d')
     
-    # Turno Noche: 20:00 a 08:00 hrs
     if hora >= 20 or hora < 8:
-        # Si pasa medianoche, el turno noche pertenece técnicamente a la fecha de inicio o fecha base
         if hora < 8:
             fecha_str = (ahora - pytz.datetime.timedelta(days=1)).strftime('%Y-%m-%d')
         return f"NOCHE-{fecha_str}"
     else:
-        # Turno Día: 08:00 a 20:00 hrs
         return f"DIA-{fecha_str}"
 
 def verificar_y_actualizar_turnos():
@@ -75,7 +80,6 @@ def verificar_y_actualizar_turnos():
     instalaciones = InstalacionDB.query.all()
     for inst in instalaciones:
         if inst.turno_activo != turno_actual:
-            # Cambio de turno detectado: se reinicia el contador actual y se actualiza el identificador de turno
             inst.rondas = 0
             inst.turno_activo = turno_actual
             db.session.commit()
