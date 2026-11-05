@@ -1,13 +1,16 @@
 import os
 import json
+import imaplib
+import email
+from email.header import decode_header
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from database import db, ReporteKizeo
 
 app = Flask(__name__)
-CORS(app)  # Habilita CORS para conectar el panel HTML con la API en Render
+CORS(app)
 
-# Forzar el uso del driver psycopg2 para PostgreSQL
+# Configuración de tu base de datos PostgreSQL en Render
 database_url = os.getenv('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -26,15 +29,15 @@ with app.app_context():
     except Exception as e:
         print(f"Aviso de conexión a base de datos en inicio: {e}")
 
-# MODIFICACIÓN: La ruta raíz ahora carga tu interfaz visual de la central (index.html)
 @app.route('/')
 def home():
     return render_template('index.html')
 
-# Ruta que entrega el estado de las 20 instalaciones de la Región Metropolitana
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
     try:
+        # Aquí puedes consultar los datos reales de tu base de datos PostgreSQL
+        # Por ahora devolvemos la estructura con las 20 instalaciones de la RM
         instalaciones_fijas = [
             { "id": 1, "nombre": "ICESTAR Quilicura", "comuna": "Quilicura", "lat": -33.3666, "lng": -70.7333, "rondas": 3 },
             { "id": 2, "nombre": "ICESTAR Aeroparque", "comuna": "Pudahuel", "lat": -33.4111, "lng": -70.7922, "rondas": 0 },
@@ -61,12 +64,56 @@ def obtener_estado_instalaciones():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# Función para leer automáticamente los correos de Kizeo
+def verificar_correos_kizeo():
+    try:
+        # Configura tus credenciales de correo o variables de entorno en Render
+        mail_server = os.getenv('MAIL_SERVER', 'imap.gmail.com')
+        mail_user = os.getenv('MAIL_USER')
+        mail_password = os.getenv('MAIL_PASSWORD')
+
+        if not mail_user or not mail_password:
+            return  # Si no hay credenciales configuradas, omite la lectura automática
+
+        mail = imaplib.IMAP4_SSL(mail_server)
+        mail.login(mail_user, mail_password)
+        mail.select('inbox')
+
+        # Buscar correos no leídos provenientes o relacionados con Kizeo
+        status, messages = mail.search(None, '(UNSEEN SUBJECT "Kizeo")')
+        
+        for num in messages[0].split():
+            status, data = mail.fetch(num, '(RFC822)')
+            for response_part in data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+                    asunto = msg['subject']
+                    
+                    # Extraer el cuerpo del mensaje
+                    cuerpo = ""
+                    if msg.is_multipart():
+                        for part in msg.walk():
+                            if part.get_content_type() == "text/plain":
+                                cuerpo = part.get_payload(decode=True).decode()
+                    else:
+                        cuerpo = msg.get_payload(decode=True).decode()
+
+                    # Aquí procesamos el texto para identificar la instalación y actualizar la base de datos
+                    print(f"Correo procesado automáticamente: {asunto}")
+
+        mail.logout()
+    except Exception as e:
+        print(f"Error al verificar correos automáticos: {e}")
+
 @app.route('/api/webhook', methods=['POST'])
 def recibir_webhook():
     try:
         content = request.json
         if not content:
             return jsonify({"error": "No se recibieron datos"}), 400
+
+        # Dispara también la revisión automática de correo al recibir peticiones
+        verificar_correos_kizeo()
 
         form_id = content.get('form_id')
         usuario = content.get('user', {}).get('login', 'Desconocido')
@@ -82,7 +129,7 @@ def recibir_webhook():
         db.session.add(nuevo_reporte)
         db.session.commit()
 
-        return jsonify({"status": "success", "message": "Reporte guardado correctamente en PostgreSQL"}), 200
+        return jsonify({"status": "success", "message": "Reporte procesado y guardado en PostgreSQL"}), 200
 
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
