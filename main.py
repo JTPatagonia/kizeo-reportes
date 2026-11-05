@@ -7,8 +7,9 @@ from flask_cors import CORS
 from database import db, ReporteKizeo
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Habilita CORS para conectar el panel HTML con la API en Render
 
+# Forzar el uso del driver psycopg2 para PostgreSQL
 database_url = os.getenv('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -27,8 +28,7 @@ with app.app_context():
     except Exception as e:
         print(f"Aviso de conexión a base de datos en inicio: {e}")
 
-# Instalaciones con meta total de rondas por turno (ej: meta de 5 rondas)
-# Las rondas inician en 0 y aumentan automáticamente con los correos/webhooks de Kizeo
+# Memoria de instalaciones con su meta total por turno y contador automático
 instalaciones_memoria = [
     { "id": 1, "nombre": "RONDA - ARAMARK ACONCAGUA", "comuna": "Colina", "lat": -33.2000, "lng": -70.6700, "rondas": 0, "meta_rondas": 5 },
     { "id": 2, "nombre": "RONDA - ARAMARK CONCEPCION", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "rondas": 0, "meta_rondas": 5 },
@@ -46,14 +46,17 @@ instalaciones_memoria = [
 def home():
     return render_template('index.html')
 
+# Ruta que entrega el estado actual de las instalaciones al panel web
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
     try:
+        # Revisa correos automáticamente cada vez que alguien abre o actualiza el panel
+        verificar_correos_kizeo()
         return jsonify(instalaciones_memoria), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Ruta para configurar la meta total de rondas de una instalación si se requiere
+# Ruta para actualizar la meta total de rondas de una instalación desde la tabla
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
     try:
@@ -70,6 +73,7 @@ def actualizar_meta():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# Función mejorada para leer automáticamente los correos de Kizeo
 def verificar_correos_kizeo():
     try:
         mail_server = os.getenv('MAIL_SERVER', 'imap.gmail.com')
@@ -83,7 +87,8 @@ def verificar_correos_kizeo():
         mail.login(mail_user, mail_password)
         mail.select('inbox')
 
-        status, messages = mail.search(None, '(UNSEEN SUBJECT "Kizeo")')
+        # Buscar correos no leídos que contengan "RONDA" en el asunto
+        status, messages = mail.search(None, '(UNSEEN SUBJECT "RONDA")')
         
         for num in messages[0].split():
             status, data = mail.fetch(num, '(RFC822)')
@@ -91,6 +96,7 @@ def verificar_correos_kizeo():
                 if isinstance(response_part, tuple):
                     msg = email.message_from_bytes(response_part[1])
                     asunto = msg['subject']
+                    
                     cuerpo = ""
                     if msg.is_multipart():
                         for part in msg.walk():
@@ -99,11 +105,20 @@ def verificar_correos_kizeo():
                     else:
                         cuerpo = msg.get_payload(decode=True).decode()
 
-                    # Automatización: Buscar a qué instalación pertenece el correo y sumar +1 ronda
+                    texto_completo = f"{asunto} {cuerpo}"
+                    print(f"Correo analizado: {asunto}")
+
+                    # Comprobar a qué instalación pertenece el correo y sumar +1 ronda automáticamente
                     for inst in instalaciones_memoria:
-                        if inst['nombre'].lower() in asunto.lower() or inst['nombre'].lower() in cuerpo.lower():
-                            inst['rondas'] += 1
-                            print(f"Ronda sumada automáticamente para: {inst['nombre']}")
+                        nombre_limpio = inst['nombre'].replace("RONDA - ", "").strip().lower()
+                        if nombre_limpio in texto_completo.lower() or inst['nombre'].lower() in texto_completo.lower():
+                            if inst['rondas'] < inst['meta_rondas']:
+                                inst['rondas'] += 1
+                                print(f"¡Ronda sumada para {inst['nombre']}! Total: {inst['rondas']}/{inst['meta_rondas']}")
+                            break
+
+            # Marcar el correo como leído para no procesarlo dos veces
+            mail.store(num, '+FLAGS', '\\Seen')
 
         mail.logout()
     except Exception as e:
@@ -122,22 +137,18 @@ def recibir_webhook():
         usuario = content.get('user', {}).get('login', 'Desconocido')
         fecha = content.get('update_time')
         
-        # Opcional: También sumar automáticamente si el webhook trae el nombre del formulario/instalación
-        form_name = content.get('form_name', '')
-        for inst in instalaciones_memoria:
-            if inst['nombre'].lower() in form_name.lower():
-                inst['rondas'] += 1
-
         nuevo_reporte = ReporteKizeo(
             form_id=str(form_id) if form_id else None,
             usuario=str(usuario),
             fecha_envio=str(fecha) if fecha else None,
             datos_json=json.dumps(content)
         )
+        
         db.session.add(nuevo_reporte)
         db.session.commit()
 
-        return jsonify({"status": "success"}), 200
+        return jsonify({"status": "success", "message": "Reporte procesado y guardado en PostgreSQL"}), 200
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
