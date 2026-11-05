@@ -12,6 +12,7 @@
         body { font-family: 'Inter', sans-serif; background-color: #121212; color: #e0e0e0; overflow-x: hidden; }
         .navbar { background-color: #1e1e1e; border-bottom: 1px solid #333; }
         .card-custom { background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; }
+        .card-novedades { background-color: #1e1e1e; border: 1px solid #dc3545; border-radius: 8px; }
         #map { height: 60vh; border-radius: 8px; border: 1px solid #333; z-index: 1; }
         .badge-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
         .table-hover tbody tr:hover { background-color: #2a2a2a !important; cursor: pointer; }
@@ -44,8 +45,8 @@
                 <i class="fa-solid fa-shield-halved text-danger me-2"></i> CENTRAL DE MONITOREO 24/7 — KIZEO AUTOMÁTICO
             </span>
             <div class="d-flex align-items-center gap-3">
-                <button onclick="forzarVerificacion()" class="btn btn-outline-warning btn-sm fw-bold">
-                    <i class="fa-solid fa-sync fa-spin me-1"></i> Sincronizar Correos
+                <button id="btn-sync" onclick="forzarVerificacion()" class="btn btn-outline-warning btn-sm fw-bold">
+                    <i id="icono-sync" class="fa-solid fa-sync me-1"></i> Sincronizar Correos
                 </button>
                 <span id="banner-alerta-global" class="badge bg-danger px-3 py-2 fs-6 d-none"><i class="fa-solid fa-triangle-exclamation me-1"></i> ¡HAY INSTALACIONES SIN RONDAS!</span>
                 <span class="badge bg-success px-3 py-2 fs-6"><i class="fa-solid fa-circle-check me-1"></i> EN VIVO (RENDER)</span>
@@ -59,7 +60,7 @@
             <div class="col-lg-8">
                 <div class="card card-custom p-3 shadow-sm mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM)</h5>
+                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM) — <small class="text-warning fs-6">Arrastra cualquier marcador para ajustar su dirección</small></h5>
                         <div class="d-flex gap-3">
                             <span class="small"><i class="fa-solid fa-triangle-exclamation text-danger"></i> 0 Avance</span>
                             <span class="small"><i class="fa-solid fa-triangle-exclamation text-warning"></i> En Proceso</span>
@@ -100,22 +101,47 @@
             </div>
         </div>
 
-        <div class="row">
-            <div class="col-12">
-                <div class="card card-custom p-3 shadow-sm">
-                    <h5 class="fw-semibold mb-3"><i class="fa-solid fa-clock-rotate-left text-warning me-2"></i> Historial de Rondas Registradas (Pasadas / Anteriores)</h5>
+        <!-- SECCIÓN SEPARADA: PLANO DE NOVEDADES Y PLANO DE RONDAS -->
+        <div class="row g-3">
+            <!-- Plano Aparte: Novedades y Alertas -->
+            <div class="col-lg-5">
+                <div class="card card-novedades p-3 shadow-sm h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold text-danger m-0"><i class="fa-solid fa-bell fa-shake me-2"></i> Registro de Novedades / Alertas</h5>
+                        <span id="contador-novedades" class="badge bg-danger">0</span>
+                    </div>
                     <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
                         <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
                             <thead>
                                 <tr>
-                                    <th>ID Reporte</th>
-                                    <th>Usuario / Guardia</th>
-                                    <th>Fecha y Hora de Envío</th>
-                                    <th>Detalles del Registro</th>
+                                    <th>Hora / Fecha</th>
+                                    <th>Instalación / Alerta</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabla-novedades">
+                                <!-- Novedades separadas de las rondas -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Plano de Historial de Rondas Normales -->
+            <div class="col-lg-7">
+                <div class="card card-custom p-3 shadow-sm h-100">
+                    <h5 class="fw-semibold mb-3"><i class="fa-solid fa-clock-rotate-left text-warning me-2"></i> Historial de Rondas Registradas</h5>
+                    <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                        <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Origen / Guardia</th>
+                                    <th>Fecha y Hora</th>
+                                    <th>Detalles de la Ronda</th>
                                 </tr>
                             </thead>
                             <tbody id="tabla-historial">
-                                <!-- Historial cargado desde PostgreSQL -->
+                                <!-- Historial de rondas cargado desde PostgreSQL -->
                             </tbody>
                         </table>
                     </div>
@@ -214,14 +240,26 @@
         }
 
         async function forzarVerificacion() {
+            const btn = document.getElementById('btn-sync');
+            const icono = document.getElementById('icono-sync');
+            btn.disabled = true;
+            icono.classList.add('fa-spin');
+
             try {
                 const res = await fetch('/api/verificar-correo');
                 const data = await res.json();
-                alert("¡Sincronización de correos ejecutada con éxito!");
-                cargarDatosEnVivo();
-                cargarHistorial();
+                if (res.ok && data.status === "success") {
+                    alert(`¡Sincronización exitosa! Correos nuevos procesados: ${data.procesados || 0}`);
+                } else {
+                    alert("Aviso del servidor: " + (data.message || "Error desconocido"));
+                }
+                await cargarDatosEnVivo();
+                await cargarHistorial();
             } catch (e) {
-                alert("Error al sincronizar correos.");
+                alert("Error de red al conectar con el servidor: " + e.message);
+            } finally {
+                btn.disabled = false;
+                icono.classList.remove('fa-spin');
             }
         }
 
@@ -229,24 +267,56 @@
             try {
                 const response = await fetch(HISTORIAL_URL);
                 const historial = await response.json();
-                const tbody = document.getElementById('tabla-historial');
-                tbody.innerHTML = '';
+                
+                const tbodyRondas = document.getElementById('tabla-historial');
+                const tbodyNovedades = document.getElementById('tabla-novedades');
+                tbodyRondas.innerHTML = '';
+                tbodyNovedades.innerHTML = '';
 
-                if (historial.length === 0) {
-                    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">No hay registros históricos aún.</td></tr>`;
-                    return;
-                }
+                let countNovedades = 0;
+                let countRondas = 0;
 
                 historial.forEach(h => {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td><small class="text-muted">#${h.id}</small></td>
-                        <td><span class="fw-semibold text-info">${h.usuario}</span></td>
-                        <td><small>${h.fecha_envio || 'Registrado'}</small></td>
-                        <td><small class="text-truncate d-inline-block" style="max-width: 400px;" title="${h.detalles}">${h.detalles}</small></td>
-                    `;
-                    tbody.appendChild(row);
+                    let objDetalle = {};
+                    try { objDetalle = JSON.parse(h.detalles || '{}'); } catch(e) {}
+
+                    const esNovedad = (h.usuario && (h.usuario.includes('NOVEDAD') || h.usuario.includes('ALERTA'))) || objDetalle.tipo === 'NOVEDAD';
+
+                    if (esNovedad) {
+                        countNovedades++;
+                        const asuntoLimpio = objDetalle.asunto || h.detalles;
+                        const rowNov = document.createElement('tr');
+                        rowNov.style.backgroundColor = 'rgba(220, 53, 69, 0.2)';
+                        rowNov.innerHTML = `
+                            <td><small class="text-warning">${h.fecha_envio || 'Reciente'}</small></td>
+                            <td>
+                                <span class="badge bg-danger mb-1">NOVEDAD</span><br>
+                                <small class="fw-bold text-light">${asuntoLimpio}</small>
+                            </td>
+                        `;
+                        tbodyNovedades.appendChild(rowNov);
+                    } else {
+                        countRondas++;
+                        const textoMostrar = objDetalle.asunto ? `${objDetalle.instalacion || ''} — ${objDetalle.asunto}` : h.detalles;
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td><small class="text-muted">#${h.id}</small></td>
+                            <td><span class="fw-semibold text-info">${h.usuario}</span></td>
+                            <td><small>${h.fecha_envio || 'Registrado'}</small></td>
+                            <td><small class="text-truncate d-inline-block" style="max-width: 380px;" title="${textoMostrar}">${textoMostrar}</small></td>
+                        `;
+                        tbodyRondas.appendChild(row);
+                    }
                 });
+
+                document.getElementById('contador-novedades').innerText = countNovedades;
+
+                if (countNovedades === 0) {
+                    tbodyNovedades.innerHTML = `<tr><td colspan="2" class="text-center text-muted py-3">Sin novedades ni alertas registradas.</td></tr>`;
+                }
+                if (countRondas === 0) {
+                    tbodyRondas.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-3">No hay rondas registradas aún.</td></tr>`;
+                }
             } catch (e) {
                 console.log("Error cargando historial", e);
             }
