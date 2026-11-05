@@ -95,11 +95,11 @@ def verificar_y_actualizar_turnos():
 def home():
     return render_template('index.html')
 
+# Ruta de estado rápida que NUNCA se bloquea con IMAP
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
     try:
         verificar_y_actualizar_turnos()
-        verificar_correos_kizeo()
         instalaciones = InstalacionDB.query.all()
         resultado = [{
             "id": i.id,
@@ -115,11 +115,12 @@ def obtener_estado_instalaciones():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# Ruta independiente para sincronizar correos sin afectar el mapa
 @app.route('/api/verificar-correo', methods=['GET'])
 def disparar_verificacion_correo():
     try:
         verificar_correos_kizeo()
-        return jsonify({"status": "success", "message": "Correos verificados correctamente"}), 200
+        return jsonify({"status": "success", "message": "Correos verificados"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -184,7 +185,7 @@ def verificar_correos_kizeo():
             return
 
         lista_ids = messages[0].split()
-        ultimos_ids = lista_ids[-30:] if len(lista_ids) > 30 else lista_ids
+        ultimos_ids = lista_ids[-25:] if len(lista_ids) > 25 else lista_ids
 
         for num in ultimos_ids:
             status, data = mail.fetch(num, '(RFC822)')
@@ -251,7 +252,6 @@ def recibir_webhook():
             return jsonify({"error": "Sin datos"}), 400
 
         verificar_y_actualizar_turnos()
-        verificar_correos_kizeo()
 
         form_id = str(content.get('form_id', ''))
         usuario = content.get('user', {}).get('login', 'Desconocido')
