@@ -20,7 +20,6 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 
-# Definir el modelo de la Base de Datos para las Instalaciones y sus Rondas
 class InstalacionDB(db.Model):
     __tablename__ = 'instalacion_db'
     id = db.Column(db.Integer, primary_key=True)
@@ -33,7 +32,6 @@ class InstalacionDB(db.Model):
 
 with app.app_context():
     db.create_all()
-    # Inicializar las instalaciones por defecto si la tabla está vacía
     if InstalacionDB.query.count() == 0:
         iniciales = [
             { "nombre": "RONDA - ARAMARK ACONCAGUA", "comuna": "Colina", "lat": -33.2000, "lng": -70.6700, "rondas": 0, "meta_rondas": 5 },
@@ -51,7 +49,6 @@ with app.app_context():
             inst = InstalacionDB(**data)
             db.session.add(inst)
         db.session.commit()
-        print("¡Instalaciones iniciales guardadas en PostgreSQL!")
 
 @app.route('/')
 def home():
@@ -72,6 +69,22 @@ def obtener_estado_instalaciones():
             "meta_rondas": i.meta_rondas
         } for i in instalaciones]
         return jsonify(resultado), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# Nueva ruta para consultar el historial de rondas pasadas almacenadas
+@app.route('/api/historial-rondas', methods=['GET'])
+def obtener_historial():
+    try:
+        reportes = ReporteKizeo.query.order_by(ReporteKizeo.id.desc()).limit(50).all()
+        historial = [{
+            "id": r.id,
+            "form_id": r.form_id,
+            "usuario": r.usuario,
+            "fecha_envio": r.fecha_envio,
+            "detalles": r.datos_json
+        } for r in reportes]
+        return jsonify(historial), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -130,7 +143,6 @@ def verificar_correos_kizeo():
                             if inst.rondas < inst.meta_rondas:
                                 inst.rondas += 1
                                 db.session.commit()
-                                print(f"¡Ronda sumada en BD para {inst.nombre}! Total: {inst.rondas}/{inst.meta_rondas}")
                             break
 
             mail.store(num, '+FLAGS', '\\Seen')
