@@ -44,6 +44,9 @@
                 <i class="fa-solid fa-shield-halved text-danger me-2"></i> CENTRAL DE MONITOREO 24/7 — KIZEO AUTOMÁTICO
             </span>
             <div class="d-flex align-items-center gap-3">
+                <button onclick="forzarVerificacion()" class="btn btn-outline-warning btn-sm fw-bold">
+                    <i class="fa-solid fa-sync fa-spin me-1"></i> Sincronizar Correos
+                </button>
                 <span id="banner-alerta-global" class="badge bg-danger px-3 py-2 fs-6 d-none"><i class="fa-solid fa-triangle-exclamation me-1"></i> ¡HAY INSTALACIONES SIN RONDAS!</span>
                 <span class="badge bg-success px-3 py-2 fs-6"><i class="fa-solid fa-circle-check me-1"></i> EN VIVO (RENDER)</span>
                 <span id="reloj-central" class="text-secondary fw-semibold fs-5">00:00:00</span>
@@ -56,7 +59,7 @@
             <div class="col-lg-8">
                 <div class="card card-custom p-3 shadow-sm mb-3">
                     <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM) — <small class="text-warning fs-6">Arrastra cualquier marcador para ajustar su dirección</small></h5>
+                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM)</h5>
                         <div class="d-flex gap-3">
                             <span class="small"><i class="fa-solid fa-triangle-exclamation text-danger"></i> 0 Avance</span>
                             <span class="small"><i class="fa-solid fa-triangle-exclamation text-warning"></i> En Proceso</span>
@@ -148,20 +151,19 @@
                 let criticos = false;
 
                 instalaciones.forEach(inst => {
-                    let colorHex = '#dc3545'; // Rojo por defecto (0)
+                    let colorHex = '#dc3545';
                     let extraClass = 'marker-critico';
 
                     if (inst.rondas >= inst.meta_rondas) {
-                        colorHex = '#198754'; // Verde si completó la meta
+                        colorHex = '#198754';
                         extraClass = '';
                     } else if (inst.rondas > 0) {
-                        colorHex = '#ffc107'; // Amarillo/Naranja si va en curso
+                        colorHex = '#ffc107';
                         extraClass = '';
                     } else {
                         criticos = true;
                     }
 
-                    // Todos usan el icono de triángulo de emergencia con su respectivo color
                     const customIcon = L.divIcon({ 
                         html: `<div class="marker-triangulo ${extraClass}" style="color: ${colorHex};"><i class="fa-solid fa-triangle-exclamation fa-lg"></i></div>`, 
                         className: '', 
@@ -208,6 +210,18 @@
 
             } catch (error) {
                 console.log("Esperando conexión...", error);
+            }
+        }
+
+        async function forzarVerificacion() {
+            try {
+                const res = await fetch('/api/verificar-correo');
+                const data = await res.json();
+                alert("¡Sincronización de correos ejecutada con éxito!");
+                cargarDatosEnVivo();
+                cargarHistorial();
+            } catch (e) {
+                alert("Error al sincronizar correos.");
             }
         }
 

@@ -115,6 +115,14 @@ def obtener_estado_instalaciones():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+@app.route('/api/verificar-correo', methods=['GET'])
+def disparar_verificacion_correo():
+    try:
+        verificar_correos_kizeo()
+        return jsonify({"status": "success", "message": "Correos verificados correctamente"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 @app.route('/api/historial-rondas', methods=['GET'])
 def obtener_historial():
     try:
@@ -176,7 +184,7 @@ def verificar_correos_kizeo():
             return
 
         lista_ids = messages[0].split()
-        ultimos_ids = lista_ids[-25:] if len(lista_ids) > 25 else lista_ids
+        ultimos_ids = lista_ids[-30:] if len(lista_ids) > 30 else lista_ids
 
         for num in ultimos_ids:
             status, data = mail.fetch(num, '(RFC822)')
@@ -203,18 +211,15 @@ def verificar_correos_kizeo():
                     existe_reporte = ReporteKizeo.query.filter_by(form_id=msg_id).first()
 
                     if not existe_reporte:
-                        # Si es un correo de Novedad o Alerta, se guarda en el historial como alerta pero NO suma rondas
                         if "novedad" in texto_limpio or "alerta" in texto_limpio:
                             nuevo_reporte = ReporteKizeo(
                                 form_id=msg_id,
-                                usuario="⚠️ ALERTA / NOVEDAD",
+                                usuario="⚠️ NOVEDAD / ALERTA",
                                 fecha_envio=str(datetime.now()),
                                 datos_json=json.dumps({"tipo": "NOVEDAD", "asunto": asunto})
                             )
                             db.session.add(nuevo_reporte)
                             db.session.commit()
-                        
-                        # Si es un correo de Ronda tradicional, procesa y suma
                         elif "ronda" in texto_limpio:
                             instalaciones = InstalacionDB.query.all()
                             for inst in instalaciones:
@@ -266,7 +271,6 @@ def recibir_webhook():
 
         existe = ReporteKizeo.query.filter_by(form_id=form_id).first() if form_id else None
         if not existe:
-            tipo_rep = "NOVEDAD" if ("novedad" in form_name_limpio or "alerta" in form_name_limpio) else "RONDA"
             nuevo_reporte = ReporteKizeo(
                 form_id=form_id if form_id else None,
                 usuario=str(usuario),
