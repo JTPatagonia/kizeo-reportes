@@ -1,6 +1,6 @@
 import os
 import json
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from database import db, ReporteKizeo
 
@@ -26,9 +26,10 @@ with app.app_context():
     except Exception as e:
         print(f"Aviso de conexión a base de datos en inicio: {e}")
 
+# MODIFICACIÓN: La ruta raíz ahora carga tu interfaz visual de la central (index.html)
 @app.route('/')
 def home():
-    return jsonify({"message": "API de Rondas Kizeo con Flask funcionando correctamente 🚀"})
+    return render_template('index.html')
 
 # Ruta que entrega el estado de las 20 instalaciones de la Región Metropolitana
 @app.route('/api/estado-instalaciones', methods=['GET'])
