@@ -80,23 +80,26 @@ def obtener_turno_actual():
         return f"DIA-{fecha_str}"
 
 def verificar_y_actualizar_turnos():
-    turno_actual = obtener_turno_actual()
-    instalaciones = InstalacionDB.query.all()
-    for inst in instalaciones:
-        if inst.turno_activo != turno_actual:
-            inst.rondas = 0
-            inst.turno_activo = turno_actual
-            db.session.commit()
+    try:
+        turno_actual = obtener_turno_actual()
+        instalaciones = InstalacionDB.query.all()
+        for inst in instalaciones:
+            if inst.turno_activo != turno_actual:
+                inst.rondas = 0
+                inst.turno_activo = turno_actual
+                db.session.commit()
+    except Exception as e:
+        print(f"Error en turnos: {e}")
 
 @app.route('/')
 def home():
     return render_template('index.html')
 
+# Ruta para el panel que carga rápido sin bloquearse con IMAP
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
     try:
         verificar_y_actualizar_turnos()
-        verificar_correos_kizeo()
         instalaciones = InstalacionDB.query.all()
         resultado = [{
             "id": i.id,
@@ -109,6 +112,15 @@ def obtener_estado_instalaciones():
             "turno": i.turno_activo
         } for i in instalaciones]
         return jsonify(resultado), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# Ruta independiente para revisar correos de forma segura
+@app.route('/api/verificar-correo', methods=['GET'])
+def disparar_verificacion_correo():
+    try:
+        verificar_correos_kizeo()
+        return jsonify({"status": "success", "message": "Correos verificados"}), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -131,12 +143,9 @@ def obtener_historial():
 def actualizar_meta():
     try:
         data = request.json
-        inst_id = data.get('id')
-        nueva_meta = data.get('meta_rondas')
-
-        inst = InstalacionDB.query.get(inst_id)
-        if inst and nueva_meta is not None:
-            inst.meta_rondas = int(nueva_meta)
+        inst = InstalacionDB.query.get(data.get('id'))
+        if inst:
+            inst.meta_rondas = int(data.get('meta_rondas'))
             db.session.commit()
             return jsonify({"status": "success"}), 200
         return jsonify({"error": "No encontrada"}), 404
@@ -147,14 +156,10 @@ def actualizar_meta():
 def actualizar_ubicacion():
     try:
         data = request.json
-        inst_id = data.get('id')
-        nueva_lat = data.get('lat')
-        nueva_lng = data.get('lng')
-
-        inst = InstalacionDB.query.get(inst_id)
-        if inst and nueva_lat is not None and nueva_lng is not None:
-            inst.lat = float(nueva_lat)
-            inst.lng = float(nueva_lng)
+        inst = InstalacionDB.query.get(data.get('id'))
+        if inst:
+            inst.lat = float(data.get('lat'))
+            inst.lng = float(data.get('lng'))
             db.session.commit()
             return jsonify({"status": "success"}), 200
         return jsonify({"error": "No encontrada"}), 404
@@ -174,15 +179,13 @@ def verificar_correos_kizeo():
         mail.login(mail_user, mail_password)
         mail.select('inbox')
 
-        # Buscar todos los correos recientes (últimos 30) sin importar si están leídos
         status, messages = mail.search(None, 'ALL')
         if status != 'OK':
             mail.logout()
             return
 
         lista_ids = messages[0].split()
-        # Tomar solo los últimos 30 correos para que sea rápido
-        ultimos_ids = lista_ids[-30:] if len(lista_ids) > 30 else lista_ids
+        ultimos_ids = lista_ids[-20:] if len(lista_ids) > 20 else lista_ids
 
         for num in ultimos_ids:
             status, data = mail.fetch(num, '(RFC822)')
@@ -206,14 +209,11 @@ def verificar_correos_kizeo():
                     texto_completo = f"{asunto} {cuerpo}"
                     texto_limpio = limpiar_texto(texto_completo)
 
-                    # Si el correo contiene la palabra ronda, revisamos qué instalación es
                     if "ronda" in texto_limpio:
                         instalaciones = InstalacionDB.query.all()
                         for inst in instalaciones:
                             nombre_limpio = limpiar_texto(inst.nombre.replace("RONDA - ", ""))
-                            # Validamos si el nombre de la instalación está presente en el correo
                             if nombre_limpio in texto_limpio:
-                                # Evitamos duplicados guardando el reporte en la BD si el Message-ID o contenido no existe
                                 msg_id = msg.get('Message-ID', str(num))
                                 existe_reporte = ReporteKizeo.query.filter_by(form_id=msg_id).first()
                                 
@@ -221,9 +221,7 @@ def verificar_correos_kizeo():
                                     if inst.rondas < inst.meta_rondas:
                                         inst.rondas += 1
                                         db.session.commit()
-                                        print(f"¡Ronda sumada automáticamente para {inst.nombre}!")
 
-                                    # Registrar en el historial para que no se procese de nuevo
                                     nuevo_reporte = ReporteKizeo(
                                         form_id=msg_id,
                                         usuario="Kizeo Bot / Email",
@@ -236,7 +234,7 @@ def verificar_correos_kizeo():
 
         mail.logout()
     except Exception as e:
-        print(f"Error al verificar correos automáticos: {e}")
+        print(f"Error al verificar correos: {e}")
 
 @app.route('/api/webhook', methods=['POST'])
 def recibir_webhook():
