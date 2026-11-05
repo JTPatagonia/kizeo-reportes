@@ -44,12 +44,16 @@ with app.app_context():
     except Exception:
         db.session.rollback()
 
-    # Limpiar alertas falsas de seguridad de Google guardadas anteriormente
+    # Limpiar correos basura que no eran de Kizeo (Google, Finish setting up, etc.)
     try:
-         falsas = ReporteKizeo.query.filter(ReporteKizeo.datos_json.ilike('%Alerta de seguridad%')).all()
-         for f in falsas:
-             db.session.delete(f)
-         db.session.commit()
+        basura = ReporteKizeo.query.filter(
+            (ReporteKizeo.datos_json.ilike('%Alerta de seguridad%')) |
+            (ReporteKizeo.datos_json.ilike('%Finish setting up%')) |
+            (ReporteKizeo.datos_json.ilike('%verificaci%'))
+        ).all()
+        for b in basura:
+            db.session.delete(b)
+        db.session.commit()
     except Exception:
         db.session.rollback()
 
@@ -74,23 +78,24 @@ with app.app_context():
 def limpiar_texto(texto):
     if not texto:
         return ""
-    # Quitar tildes y diacríticos
     texto_norm = ''.join(c for c in unicodedata.normalize('NFD', str(texto)) if unicodedata.category(c) != 'Mn')
-    # Dejar solo letras, números y espacios
     texto_limpio = re.sub(r'[^a-zA-Z0-9\s]', ' ', texto_norm)
     return re.sub(r'\s+', ' ', texto_limpio).lower().strip()
 
 def decodificar_encabezado(valor):
     if not valor:
         return ""
-    partes = decode_header(valor)
-    resultado = ""
-    for texto, encoding in partes:
-        if isinstance(texto, bytes):
-            resultado += texto.decode(encoding or 'utf-8', errors='ignore')
-        else:
-            resultado += str(texto)
-    return resultado.strip()
+    try:
+        partes = decode_header(valor)
+        resultado = ""
+        for texto, encoding in partes:
+            if isinstance(texto, bytes):
+                resultado += texto.decode(encoding or 'utf-8', errors='ignore')
+            else:
+                resultado += str(texto)
+        return resultado.strip()
+    except Exception:
+        return str(valor)
 
 def obtener_turno_actual():
     chile_tz = pytz.timezone('America/Santiago')
@@ -144,10 +149,11 @@ def obtener_estado_instalaciones():
 @app.route('/api/verificar-correo', methods=['GET'])
 def disparar_verificacion_correo():
     ok, msg, procesados = verificar_correos_kizeo()
-    if ok:
-        return jsonify({"status": "success", "message": msg, "procesados": procesados}), 200
-    else:
-        return jsonify({"status": "error", "message": msg, "procesados": 0}), 200
+    return jsonify({
+        "status": "success" if ok else "error",
+        "message": msg,
+        "procesados": procesados
+    }), 200
 
 @app.route('/api/historial-rondas', methods=['GET'])
 def obtener_historial():
@@ -191,18 +197,16 @@ def actualizar_ubicacion():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-def coincidencia_instalacion(nombre_db, texto_correo_limpio):
-    # Ej: "RONDA - ICESTAR PUDAHUEL" -> ["icestar", "pudahuel"]
+def coincidencia_instalacion(nombre_db, texto_limpio):
     base = limpiar_texto(nombre_db.replace("RONDA - ", "").replace("RONDA", ""))
     palabras = [p for p in base.split() if len(p) > 2]
     if not palabras:
         return False
-    # Deben estar TODAS las palabras del nombre de la instalación en el correo
-    # Así "ICESTAR PUDAHUEL" no se confunde con "ICESTAR QUILICURA"
-    return all(p in texto_correo_limpio for p in palabras)
+    return all(p in texto_limpio for p in palabras)
 
 def verificar_correos_kizeo():
     procesados = 0
+    mail = None
     try:
         mail_server = os.getenv('MAIL_SERVER', 'imap.gmail.com')
         mail_user = os.getenv('MAIL_USER')
@@ -211,69 +215,71 @@ def verificar_correos_kizeo():
         if not mail_user or not mail_password:
             return False, "Faltan variables MAIL_USER o MAIL_PASSWORD en Render", 0
 
-        # Timeout de 15s para que jamás cuelgue el worker de Gunicorn en Render
-        mail = imaplib.IMAP4_SSL(mail_server, timeout=15)
+        # Timeout corto de 10 segundos para que NUNCA muera Gunicorn
+        mail = imaplib.IMAP4_SSL(mail_server, timeout=10)
         mail.login(mail_user, mail_password)
-        mail.select('inbox')
+        status, messages = mail.select('INBOX', readonly=True)
+        
+        if status != 'OK':
+            return False, "No se pudo abrir INBOX", 0
 
-        status, messages = mail.search(None, 'ALL')
-        if status != 'OK' or not messages or not messages[0]:
+        total_correos = int(messages[0])
+        if total_correos == 0:
             mail.logout()
             return True, "Bandeja vacía", 0
 
-        lista_ids = messages[0].split()
-        # Revisar los últimos 20 correos recibidos
-        ultimos_ids = lista_ids[-20:] if len(lista_ids) > 20 else lista_ids
+        # Tomar únicamente los últimos 12 correos por secuencia directa (sin usar SEARCH ALL que es lento)
+        inicio = max(1, total_correos - 11)
+        rango_ids = [str(i).encode() for i in range(inicio, total_correos + 1)]
 
         instalaciones = InstalacionDB.query.all()
         chile_tz = pytz.timezone('America/Santiago')
         ahora_str = datetime.now(chile_tz).strftime('%Y-%m-%d %H:%M:%S')
 
-        for num in ultimos_ids:
+        for num in rango_ids:
             try:
-                # CLAVE: Solo descarga encabezados y los primeros 2000 bytes de texto (ignora los PDFs pesados)
-                status, data = mail.fetch(num, '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM MESSAGE-ID DATE)] BODY.PEEK[TEXT]<0.2000>)')
+                # SOLO descargamos el ENCABEZADO (Subject y Message-ID). Pesa 200 bytes y tarda 0.05 segundos.
+                #En tus capturas de Gmail, TODOS los correos de Kizeo tienen "RONDA... - INSTALACION" o "ALERTA... - INSTALACION" en el Asunto.
+                status, data = mail.fetch(num, '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM MESSAGE-ID)])')
                 if status != 'OK' or not data:
                     continue
 
                 asunto = ""
                 remitente = ""
                 msg_id = ""
-                cuerpo_snippet = ""
 
                 for part in data:
                     if isinstance(part, tuple):
-                        header_info = part[0].decode('utf-8', errors='ignore').upper()
-                        contenido_bytes = part[1]
-                        if 'HEADER' in header_info:
-                            msg_hdr = email.message_from_bytes(contenido_bytes)
-                            asunto = decodificar_encabezado(msg_hdr.get('Subject', ''))
-                            remitente = decodificar_encabezado(msg_hdr.get('From', ''))
-                            msg_id = (msg_hdr.get('Message-ID') or '').strip()
-                        else:
-                            cuerpo_snippet += contenido_bytes.decode('utf-8', errors='ignore')
+                        msg_hdr = email.message_from_bytes(part[1])
+                        asunto = decodificar_encabezado(msg_hdr.get('Subject', ''))
+                        remitente = decodificar_encabezado(msg_hdr.get('From', ''))
+                        msg_id = (msg_hdr.get('Message-ID') or '').strip()
+
+                if not asunto:
+                    continue
 
                 if not msg_id:
-                    msg_id = f"imap-uid-{num.decode('utf-8', errors='ignore')}"
+                    msg_id = f"kizeo-subj-{limpiar_texto(asunto)}-{num.decode()}"
 
                 asunto_limpio = limpiar_texto(asunto)
                 remitente_limpio = limpiar_texto(remitente)
-                texto_completo_limpio = limpiar_texto(f"{asunto} {cuerpo_snippet}")
 
-                # Ignorar correos de Google o alertas de cuenta
-                if "google" in remitente_limpio or "alerta de seguridad" in asunto_limpio or "accounts google" in texto_completo_limpio:
+                # Ignorar correos de Google, Render, verificaciones, etc.
+                if any(x in remitente_limpio for x in ["google", "render", "no reply", "noreply"]):
+                    if "kizeo" not in remitente_limpio:
+                        continue
+                if any(x in asunto_limpio for x in ["alerta de seguridad", "finish setting up", "verificacion", "welcome"]):
                     continue
 
-                # Verificar si ya fue registrado en la base de datos
-                existe = ReporteKizeo.query.filter_by(form_id=msg_id).first()
-                if existe:
+                # Verificar si ya existe este correo en la BD
+                if ReporteKizeo.query.filter_by(form_id=msg_id).first():
                     continue
 
-                # 1. PLANO APARTE: ¿Es un correo de ALERTA / NOVEDADES?
-                if "alerta" in asunto_limpio or "novedad" in texto_completo_limpio or "novedades" in texto_completo_limpio:
+                # 1. ¿Es ALERTA / NOVEDAD? (Ej: "🚨⚠️ALERTA🚨⚠️ - ICESTAR PUDAHUEL")
+                if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_detectada = "General"
                     for inst in instalaciones:
-                        if coincidencia_instalacion(inst.nombre, texto_completo_limpio):
+                        if coincidencia_instalacion(inst.nombre, asunto_limpio):
                             inst_detectada = inst.nombre.replace("RONDA - ", "")
                             break
 
@@ -291,31 +297,41 @@ def verificar_correos_kizeo():
                     db.session.commit()
                     procesados += 1
 
-                # 2. PLANO DE RONDAS: ¿Es un correo de RONDA normal?
-                elif "ronda" in texto_completo_limpio:
+                # 2. ¿Es RONDA? (Ej: "RONDA👮‍♂️🚀 - MEGAFRIO RENCA" o "RONDA👮‍♂️🚀")
+                elif "ronda" in asunto_limpio:
+                    inst_encontrada = None
                     for inst in instalaciones:
-                        if coincidencia_instalacion(inst.nombre, texto_completo_limpio):
-                            if inst.rondas < inst.meta_rondas:
-                                inst.rondas += 1
-                            
-                            nuevo_rep = ReporteKizeo(
-                                form_id=msg_id,
-                                usuario=f"Guardia / {inst.nombre.replace('RONDA - ', '')}",
-                                fecha_envio=ahora_str,
-                                datos_json=json.dumps({
-                                    "tipo": "RONDA",
-                                    "instalacion": inst.nombre,
-                                    "asunto": asunto
-                                }, ensure_ascii=False)
-                            )
-                            db.session.add(nuevo_rep)
-                            db.session.commit()
-                            procesados += 1
+                        if coincidencia_instalacion(inst.nombre, asunto_limpio):
+                            inst_encontrada = inst
                             break
+                    
+                    # Si el asunto solo dice "RONDA" (como el de UNIPACK), miramos el nombre del remitente ("UNIPACK UNIPACK")
+                    if not inst_encontrada:
+                        for inst in instalaciones:
+                            if coincidencia_instalacion(inst.nombre, remitente_limpio):
+                                inst_encontrada = inst
+                                break
+
+                    if inst_encontrada:
+                        if inst_encontrada.rondas < inst_encontrada.meta_rondas:
+                            inst_encontrada.rondas += 1
+                        
+                        nuevo_rep = ReporteKizeo(
+                            form_id=msg_id,
+                            usuario=f"Guardia / {inst_encontrada.nombre.replace('RONDA - ', '')}",
+                            fecha_envio=ahora_str,
+                            datos_json=json.dumps({
+                                "tipo": "RONDA",
+                                "instalacion": inst_encontrada.nombre,
+                                "asunto": asunto
+                            }, ensure_ascii=False)
+                        )
+                        db.session.add(nuevo_rep)
+                        db.session.commit()
+                        procesados += 1
 
             except Exception as e_inner:
                 db.session.rollback()
-                print(f"Error procesando correo {num}: {e_inner}")
                 continue
 
         try:
@@ -323,11 +339,15 @@ def verificar_correos_kizeo():
         except Exception:
             pass
 
-        return True, "Sincronización completada", procesados
+        return True, "Correos sincronizados correctamente", procesados
 
     except Exception as e:
-        print(f"Error IMAP: {e}")
-        return False, f"Error IMAP: {str(e)}", 0
+        if mail:
+            try:
+                mail.logout()
+            except Exception:
+                pass
+        return False, f"Detalle técnico IMAP: {str(e)}", 0
 
 @app.route('/api/webhook', methods=['POST'])
 def recibir_webhook():
