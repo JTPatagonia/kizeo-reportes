@@ -40,10 +40,10 @@
     <nav class="navbar navbar-dark px-4 py-2">
         <div class="container-fluid">
             <span class="navbar-brand mb-0 h1 fw-bold">
-                <i class="fa-solid fa-shield-halved text-danger me-2"></i> CENTRAL DE MONITOREO 24/7 — CAMBIO DE TURNO
+                <i class="fa-solid fa-shield-halved text-danger me-2"></i> CENTRAL DE MONITOREO 24/7 — KIZEO AUTOMÁTICO
             </span>
             <div class="d-flex align-items-center gap-3">
-                <span id="banner-alerta-global" class="badge bg-danger px-3 py-2 fs-6 d-none"><i class="fa-solid fa-triangle-exclamation me-1"></i> ¡HAY INSTALACIONES SIN RONDAS (0)!</span>
+                <span id="banner-alerta-global" class="badge bg-danger px-3 py-2 fs-6 d-none"><i class="fa-solid fa-triangle-exclamation me-1"></i> ¡HAY INSTALACIONES SIN RONDAS!</span>
                 <span class="badge bg-success px-3 py-2 fs-6"><i class="fa-solid fa-circle-check me-1"></i> EN VIVO (RENDER)</span>
                 <span id="reloj-central" class="text-secondary fw-semibold fs-5">00:00:00</span>
             </div>
@@ -57,10 +57,9 @@
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo (RM)</h5>
                         <div class="d-flex gap-3">
-                            <span class="small"><span class="badge-dot bg-danger"></span> 0 Rondas</span>
-                            <span class="small"><span class="badge-dot bg-warning"></span> 1 Ronda</span>
-                            <span class="small"><span class="badge-dot" style="background-color: #fd7e14;"></span> 2 Rondas</span>
-                            <span class="small"><span class="badge-dot bg-success"></span> 3 Rondas</span>
+                            <span class="small"><span class="badge-dot bg-danger"></span> 0 Avance</span>
+                            <span class="small"><span class="badge-dot bg-warning"></span> En Proceso</span>
+                            <span class="small"><span class="badge-dot bg-success"></span> Meta Completa</span>
                         </div>
                     </div>
                     <div id="map"></div>
@@ -78,17 +77,17 @@
                 </div>
 
                 <div class="card card-custom p-3 shadow-sm mb-3">
-                    <h5 class="fw-semibold mb-3"><i class="fa-solid fa-sliders text-warning me-2"></i> Control de Mando (Turno)</h5>
+                    <h5 class="fw-semibold mb-3"><i class="fa-solid fa-list-check text-info me-2"></i> Progreso de Rondas (Automático)</h5>
                     <div class="table-responsive" style="max-height: 280px; overflow-y: auto;">
                         <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
                             <thead>
                                 <tr>
                                     <th>Instalación</th>
-                                    <th class="text-center">Rondas</th>
-                                    <th class="text-center">Acción Manual</th>
+                                    <th class="text-center">Progreso</th>
+                                    <th class="text-center">Meta Total</th>
                                 </tr>
                             </thead>
-                            <tbody id="tabla-control-turno">
+                            <tbody id="tabla-progreso">
                                 <!-- Cargado dinámicamente -->
                             </tbody>
                         </table>
@@ -119,33 +118,42 @@
                 const instalaciones = await response.json();
                 
                 markersLayer.clearLayers();
-                const tbody = document.getElementById('tabla-control-turno');
+                const tbody = document.getElementById('tabla-progreso');
                 tbody.innerHTML = '';
                 let criticos = false;
 
                 instalaciones.forEach(inst => {
+                    let color = '#dc3545'; // Rojo por defecto (0)
+                    if (inst.rondas >= inst.meta_rondas) {
+                        color = '#198754'; // Verde si completó la meta
+                    } else if (inst.rondas > 0) {
+                        color = '#ffc107'; // Amarillo/Naranja si va avanzando
+                    }
+
                     let customIcon;
                     if (inst.rondas === 0) {
                         criticos = true;
                         customIcon = L.divIcon({ html: `<div class="marker-critico"><i class="fa-solid fa-triangle-exclamation"></i></div>`, className: '', iconSize: [24, 24] });
                     } else {
-                        let color = inst.rondas === 1 ? '#ffc107' : (inst.rondas === 2 ? '#fd7e14' : '#198754');
                         customIcon = L.divIcon({ html: `<div style="background-color: ${color}; width: 18px; height: 18px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 8px rgba(0,0,0,0.6);"></div>`, className: '', iconSize: [18, 18] });
                     }
 
                     const marker = L.marker([inst.lat, inst.lng], { icon: customIcon });
-                    marker.bindPopup(`<b>${inst.nombre}</b><br>Comuna: ${inst.comuna}<br>Rondas actuales: <b>${inst.rondas}</b>`);
+                    marker.bindPopup(`<b>${inst.nombre}</b><br>Comuna: ${inst.comuna}<br>Progreso: <b>${inst.rondas} / ${inst.meta_rondas}</b> rondas`);
                     markersLayer.addLayer(marker);
 
                     const row = document.createElement('tr');
                     if (inst.rondas === 0) row.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
+                    
+                    let badgeEstado = inst.rondas >= inst.meta_rondas ? 
+                        `<span class="badge bg-success">${inst.rondas} / ${inst.meta_rondas} (Completado)</span>` :
+                        `<span class="badge bg-warning text-dark">${inst.rondas} / ${inst.meta_rondas} (En curso)</span>`;
+
                     row.innerHTML = `
                         <td><small class="fw-bold">${inst.nombre}</small></td>
-                        <td class="text-center fw-bold fs-6">${inst.rondas}</td>
+                        <td class="text-center">${badgeEstado}</td>
                         <td class="text-center">
-                            <button onclick="cambiarRondas(${inst.id}, 0)" class="btn btn-outline-danger btn-sm py-0 px-1" title="Resetear a 0">0</button>
-                            <button onclick="cambiarRondas(${inst.id}, 1)" class="btn btn-outline-warning btn-sm py-0 px-1" title="1 Ronda">1</button>
-                            <button onclick="cambiarRondas(${inst.id}, 3)" class="btn btn-outline-success btn-sm py-0 px-1" title="Completar">3</button>
+                            <input type="number" value="${inst.meta_rondas}" min="1" max="20" style="width: 50px; background: #2a2a2a; color: white; border: 1px solid #444; text-align: center;" onchange="cambiarMeta(${inst.id}, this.value)">
                         </td>
                     `;
                     tbody.appendChild(row);
@@ -162,11 +170,11 @@
             }
         }
 
-        async function cambiarRondas(id, nuevasRondas) {
-            await fetch('/api/actualizar-instalacion', {
+        async function cambiarMeta(id, nuevaMeta) {
+            await fetch('/api/actualizar-meta', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: id, rondas: nuevasRondas })
+                body: JSON.stringify({ id: id, meta_rondas: nuevaMeta })
             });
             cargarDatosEnVivo();
         }
