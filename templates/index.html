@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Central de Monitoreo 24/7 - Región Metropolitana</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #121212; color: #e0e0e0; overflow-x: hidden; }
+        .navbar { background-color: #1e1e1e; border-bottom: 1px solid #333; }
+        .card-custom { background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; }
+        #map { height: 72vh; border-radius: 8px; border: 1px solid #333; z-index: 1; }
+        .badge-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+        .table-hover tbody tr:hover { background-color: #2a2a2a !important; cursor: pointer; }
+        @keyframes alertPulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.9); }
+            70% { transform: scale(1.25); box-shadow: 0 0 0 12px rgba(220, 53, 69, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+        }
+        .marker-critico {
+            background-color: #dc3545; color: white; width: 24px; height: 24px;
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            border: 2px solid white; animation: alertPulse 1.2s infinite; font-size: 10px; font-weight: bold;
+        }
+        @keyframes emergencyFlash {
+            0% { background-color: rgba(220, 53, 69, 0.9); }
+            50% { background-color: rgba(255, 255, 255, 0.2); }
+            100% { background-color: rgba(220, 53, 69, 0.9); }
+        }
+        .emergency-active { animation: emergencyFlash 0.8s infinite; border: 3px solid #ffc107 !important; }
+        .table-dark-custom { background-color: #1e1e1e; color: #e0e0e0; }
+        .table-dark-custom th, .table-dark-custom td { border-color: #333; }
+    </style>
+</head>
+<body>
+
+    <nav class="navbar navbar-dark px-4 py-2">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1 fw-bold">
+                <i class="fa-solid fa-shield-halved text-danger me-2"></i> CENTRAL DE MONITOREO 24/7 — REGIÓN METROPOLITANA
+            </span>
+            <div class="d-flex align-items-center gap-3">
+                <span id="banner-alerta-global" class="badge bg-danger px-3 py-2 fs-6 d-none"><i class="fa-solid fa-triangle-exclamation me-1"></i> ¡HAY INSTALACIONES SIN RONDAS (0)!</span>
+                <span class="badge bg-success px-3 py-2 fs-6"><i class="fa-solid fa-circle-check me-1"></i> EN VIVO (RENDER)</span>
+                <span id="reloj-central" class="text-secondary fw-semibold fs-5">00:00:00</span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid py-4">
+        <div class="row g-3">
+            <div class="col-lg-8">
+                <div class="card card-custom p-3 shadow-sm">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="m-0 fw-semibold"><i class="fa-solid fa-map-location-dot text-primary me-2"></i> Mapa Operativo de Rondas (RM)</h5>
+                        <div class="d-flex gap-3">
+                            <span class="small"><span class="badge-dot bg-danger"></span> 0 Rondas</span>
+                            <span class="small"><span class="badge-dot bg-warning"></span> 1 Ronda</span>
+                            <span class="small"><span class="badge-dot" style="background-color: #fd7e14;"></span> 2 Rondas</span>
+                            <span class="small"><span class="badge-dot bg-success"></span> 3 Rondas</span>
+                        </div>
+                    </div>
+                    <div id="map"></div>
+                </div>
+            </div>
+
+            <div class="col-lg-4">
+                <div id="panel-emergencia" class="card card-custom p-4 mb-3 text-center shadow">
+                    <h4 class="text-danger fw-bold mb-2"><i class="fa-solid fa-triangle-exclamation"></i> BOTÓN DE PÁNICO TÁCTICO</h4>
+                    <p class="text-muted small mb-3">Alerta en tiempo real de unidades en terreno.</p>
+                    <button onclick="activarPanicoRemoto()" class="btn btn-danger btn-lg w-100 py-3 fw-bold shadow">
+                        <i class="fa-solid fa-bell-slash fa-shake me-2"></i> SIMULAR EMERGENCIA
+                    </button>
+                    <div id="estado-panico" class="mt-3 text-secondary small fw-semibold">Estado: Operación Normal</div>
+                </div>
+
+                <div class="card card-custom p-3 shadow-sm mb-3">
+                    <h5 class="fw-semibold mb-3"><i class="fa-solid fa-list-check text-info me-2"></i> Estado en Vivo (RM)</h5>
+                    <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                        <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
+                            <thead>
+                                <tr>
+                                    <th>Instalación</th>
+                                    <th>Comuna</th>
+                                    <th>Rondas</th>
+                                    <th>Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tabla-instalaciones">
+                                <!-- Se carga dinámicamente desde Flask/Render -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        setInterval(() => {
+            document.getElementById('reloj-central').innerText = new Date().toLocaleTimeString();
+        }, 1000);
+
+        const map = L.map('map').setView([-33.4489, -70.6693], 10);
+        L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        let markersLayer = L.layerGroup().addTo(map);
+
+        // URL de tu API desplegada en Render
+        const API_URL = "https://kizeo-reportes.onrender.com/api/estado-instalaciones";
+
+        async function cargarDatosEnVivo() {
+            try {
+                const response = await fetch(API_URL);
+                const instalaciones = await response.json();
+                
+                markersLayer.clearLayers();
+                const tbody = document.getElementById('tabla-instalaciones');
+                tbody.innerHTML = '';
+                let criticos = false;
+
+                instalaciones.forEach(inst => {
+                    let customIcon;
+                    if (inst.rondas === 0) {
+                        criticos = true;
+                        customIcon = L.divIcon({ html: `<div class="marker-critico"><i class="fa-solid fa-triangle-exclamation"></i></div>`, className: '', iconSize: [24, 24] });
+                    } else {
+                        let color = inst.rondas === 1 ? '#ffc107' : (inst.rondas === 2 ? '#fd7e14' : '#198754');
+                        customIcon = L.divIcon({ html: `<div style="background-color: ${color}; width: 18px; height: 18px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 8px rgba(0,0,0,0.6);"></div>`, className: '', iconSize: [18, 18] });
+                    }
+
+                    const marker = L.marker([inst.lat, inst.lng], { icon: customIcon });
+                    marker.bindPopup(`<b>${inst.nombre}</b><br>Comuna: ${inst.comuna}<br>Rondas: <b>${inst.rondas} / 3</b>`);
+                    markersLayer.addLayer(marker);
+
+                    let badge = inst.rondas === 0 ? '<span class="badge bg-danger">Crítico (0)</span>' :
+                                (inst.rondas === 1 ? '<span class="badge bg-warning text-dark">Pendiente (1)</span>' :
+                                (inst.rondas === 2 ? '<span class="badge" style="background-color:#fd7e14;">Avanzado (2)</span>' : '<span class="badge bg-success">Completado (3)</span>'));
+
+                    const row = document.createElement('tr');
+                    if (inst.rondas === 0) row.style.backgroundColor = 'rgba(220, 53, 69, 0.15)';
+                    row.innerHTML = `<td><strong>${inst.nombre}</strong></td><td>${inst.comuna}</td><td class="text-center fw-bold">${inst.rondas}</td><td>${badge}</td>`;
+                    
+                    row.onclick = () => {
+                        map.setView([inst.lat, inst.lng], 14, { animate: true });
+                        marker.openPopup();
+                    };
+                    tbody.appendChild(row);
+                });
+
+                if (criticos) {
+                    document.getElementById('banner-alerta-global').classList.remove('d-none');
+                } else {
+                    document.getElementById('banner-alerta-global').classList.add('d-none');
+                }
+
+            } catch (error) {
+                console.log("Esperando conexión con el servidor en Render...", error);
+            }
+        }
+
+        // Consultar datos al iniciar y luego cada 10 segundos automáticamente
+        cargarDatosEnVivo();
+        setInterval(cargarDatosEnVivo, 10000);
+
+        function activarPanicoRemoto() {
+            const panel = document.getElementById('panel-emergencia');
+            const estado = document.getElementById('estado-panico');
+            panel.classList.add('emergency-active');
+            estado.innerHTML = `<span class="text-warning fw-bold"><i class="fa-solid fa-triangle-exclamation"></i> ¡ALERTA DE PÁNICO EN CURSO!</span>`;
+            
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                let osc = audioCtx.createOscillator();
+                let gain = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                let time = audioCtx.currentTime;
+                for (let i = 0; i < 6; i++) {
+                    osc.frequency.setValueAtTime(400, time + (i * 0.4));
+                    osc.frequency.linearRampToValueAtTime(850, time + (i * 0.4) + 0.2);
+                }
+                gain.gain.setValueAtTime(0.2, time);
+                osc.start();
+                osc.stop(time + 2.5);
+            } catch(e) {}
+        }
+    </script>
+</body>
+</html>

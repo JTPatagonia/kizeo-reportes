@@ -1,58 +1,40 @@
-import os
-import json
-from flask import Flask, request, jsonify
-from database import db, ReporteKizeo
+from flask import Flask, jsonify, request
+from flask_cors import CORS  # Importante para permitir conexión con el HTML
 
 app = Flask(__name__)
+CORS(app)  # Habilita CORS para que tu página web pueda consultar la API
 
-# Forzar el uso del driver psycopg2 para evitar que busque el módulo psycopg v3
-database_url = os.getenv('DATABASE_URL')
-if database_url and database_url.startswith("postgres://"):
-    database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)
-elif database_url and database_url.startswith("postgresql://"):
-    database_url = database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+# Base de datos simulada en memoria (puedes conectarla a tu PostgreSQL real con SQLAlchemy o psycopg2)
+instalaciones_db = [
+    { "id": 1, "nombre": "ICESTAR Quilicura", "comuna": "Quilicura", "lat": -33.3666, "lng": -70.7333, "rondas": 3 },
+    { "id": 2, "nombre": "ICESTAR Aeroparque", "comuna": "Pudahuel", "lat": -33.4111, "lng": -70.7922, "rondas": 0 },
+    { "id": 3, "nombre": "Megafrio-Renca", "comuna": "Renca", "lat": -33.4034, "lng": -70.7185, "rondas": 1 },
+    # ... puedes agregar el resto de tus 20 instalaciones aquí o traerlas desde PostgreSQL
+]
 
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# Ruta que consulta la central 24/7 en tiempo real
+@app.route('/api/estado-instalaciones', methods=['GET'])
+def obtener_estado():
+    return jsonify(instalaciones_db)
 
-db.init_app(app)
-
-with app.app_context():
-    try:
-        db.create_all()
-        print("¡Tablas creadas o verificadas con éxito en PostgreSQL!")
-    except Exception as e:
-        print(f"Aviso de conexión a base de datos en inicio: {e}")
-
-@app.route('/')
-def home():
-    return jsonify({"message": "API de Rondas Kizeo con Flask funcionando correctamente 🚀"})
-
+# Ruta Webhook que recibe los datos cuando Kizeo Forms procesa una ronda
 @app.route('/api/webhook', methods=['POST'])
-def recibir_webhook():
-    try:
-        content = request.json
-        if not content:
-            return jsonify({"error": "No se recibieron datos"}), 400
+def webhook_kizeo():
+    data = request.json
+    if not data:
+        return jsonify({"error": "Sin datos"}), 400
 
-        form_id = content.get('form_id')
-        usuario = content.get('user', {}).get('login', 'Desconocido')
-        fecha = content.get('update_time')
-        
-        nuevo_reporte = ReporteKizeo(
-            form_id=str(form_id) if form_id else None,
-            usuario=str(usuario),
-            fecha_envio=str(fecha) if fecha else None,
-            datos_json=json.dumps(content)
-        )
-        
-        db.session.add(nuevo_reporte)
-        db.session.commit()
+    # Aquí extraes el nombre de la instalación y las rondas enviadas por Kizeo
+    nombre_inst = data.get("instalacion")
+    nuevas_rondas = data.get("rondas")
 
-        return jsonify({"status": "success", "message": "Reporte guardado correctamente en PostgreSQL"}), 200
+    # Actualizamos el registro en la base de datos
+    for inst in instalaciones_db:
+        if inst["nombre"].lower() == nombre_inst.lower():
+            inst["rondas"] = int(nuevas_rondas)
+            return jsonify({"status": "success", "mensaje": f"Actualizado {nombre_inst} a {nuevas_rondas} rondas"}), 200
 
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    return jsonify({"error": "Instalación no encontrada"}), 404
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
