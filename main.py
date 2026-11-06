@@ -270,38 +270,31 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 pdf_base64 = ""
                 nombre_pdf = ""
 
-                if msg.is_multipart():
-                    for part_m in msg.walk():
-                        content_type = part_m.get_content_type()
-                        content_disposition = str(part_m.get("Content-Disposition"))
-                        
-                        if "attachment" in content_disposition or "filename" in content_disposition:
-                            filename = part_m.get_filename()
-                            if filename:
-                                filename = decodificar_encabezado(filename)
-                                if ".pdf" in filename.lower():
-                                    try:
-                                        pdf_bytes = part_m.get_payload(decode=True)
-                                        if pdf_bytes:
-                                            pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
-                                            nombre_pdf = filename
-                                    except Exception:
-                                        pass
+                # Recorrido exhaustivo para encontrar cualquier PDF adjunto en el correo
+                for part_m in msg.walk():
+                    content_type = part_m.get_content_type()
+                    content_disposition = str(part_m.get("Content-Disposition", ""))
+                    filename = part_m.get_filename()
+                    
+                    if filename:
+                        filename = decodificar_encabezado(filename)
 
-                        if content_type == "text/plain" and not cuerpo_texto:
-                            try:
-                                payload = part_m.get_payload(decode=True)
-                                charset = part_m.get_content_charset() or 'utf-8'
-                                cuerpo_texto = payload.decode(charset, errors='ignore')
-                            except Exception:
-                                pass
-                else:
-                    try:
-                        payload = msg.get_payload(decode=True)
-                        charset = msg.get_content_charset() or 'utf-8'
-                        cuerpo_texto = payload.decode(charset, errors='ignore')
-                    except Exception:
-                        pass
+                    if (content_type == "application/pdf") or (filename and ".pdf" in filename.lower()) or ("attachment" in content_disposition and filename and ".pdf" in filename.lower()):
+                        try:
+                            pdf_bytes = part_m.get_payload(decode=True)
+                            if pdf_bytes:
+                                pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                                nombre_pdf = filename or "reporte.pdf"
+                        except Exception:
+                            pass
+
+                    if content_type == "text/plain" and not cuerpo_texto:
+                        try:
+                            payload = part_m.get_payload(decode=True)
+                            charset = part_m.get_content_charset() or 'utf-8'
+                            cuerpo_texto = payload.decode(charset, errors='ignore')
+                        except Exception:
+                            pass
 
                 if not cuerpo_texto:
                     cuerpo_texto = asunto
@@ -559,7 +552,6 @@ def obtener_historial():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Ruta para ver el detalle y visualizar el PDF incrustado en Base64
 @app.route('/api/detalle-reporte/<int:reporte_id>', methods=['GET'])
 def obtener_detalle_reporte(reporte_id):
     if 'operador_id' not in session:

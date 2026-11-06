@@ -230,7 +230,7 @@
         </div>
     </div>
 
-    <!-- MODAL VISOR DE CORREO Y PDF (Solo para Alertas/Novedades) -->
+    <!-- MODAL VISOR DE CORREO Y PDF -->
     <div class="modal fade" id="modalDetalleCorreo" tabindex="-1">
         <div class="modal-dialog modal-xl modal-dialog-centered">
             <div class="modal-content bg-dark text-light border border-secondary shadow-lg">
@@ -401,7 +401,7 @@
             });
         }
 
-        // Visor de PDF (Únicamente para alertas y novedades)
+        // Visor de PDF con iframe optimizado
         async function verDetalleReporte(reporteId) {
             const modal = new bootstrap.Modal(document.getElementById('modalDetalleCorreo'));
             modal.show();
@@ -425,7 +425,7 @@
                     if (data.tiene_pdf && data.pdf_base64) {
                         const dataUrl = `data:application/pdf;base64,${data.pdf_base64}`;
                         document.getElementById('contenedor-visor-pdf').innerHTML = `
-                            <embed src="${dataUrl}" type="application/pdf" width="100%" height="100%" />
+                            <iframe src="${dataUrl}" width="100%" height="100%" style="border:none;"></iframe>
                         `;
                         const btnDescargar = document.getElementById('btn-descargar-pdf');
                         btnDescargar.href = dataUrl;
@@ -647,7 +647,7 @@
                     primerRenderTurnos = false;
                 }
 
-                // Render Novedades (INTERACTIVAS - abren el PDF)
+                // Render Novedades (INTERACTIVAS)
                 if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
                     contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
                 } else {
@@ -676,7 +676,7 @@
                                         <div class="d-flex align-items-center gap-2"><i class="fa-solid fa-triangle-exclamation text-danger"></i><span class="fw-bold text-light small">${inst}</span></div>
                                         <div class="d-flex align-items-center gap-2"><span class="badge bg-danger">${lista.length}</span><i id="inst-nov-icono-${clave}" class="fa-solid fa-chevron-down text-secondary small chevron-turno ${ab?'rotado':''}"></i></div>
                                     </div>
-                                    <div id="inst-nov-body-${clave}" class="nov-grupo-body ${ab?'abierto':''}"><table class="table table-dark table-sm table-dark-custom table-hover m-0"><tbody>${filas}</tbody></table></div>
+                                    <div id="inst-nov-body-${clave}" class="nov-grupo-body ${ab?'abierto':''}"><table class="table table-dark table-sm table-dark-custom m-0"><tbody>${filas}</tbody></table></div>
                                 </div>
                             `;
                         });
@@ -693,7 +693,7 @@
                     });
                 }
 
-                // Render Rondas (ESTÁTICAS - solo registro, sin eventos de clic ni apertura de PDF)
+                // Render Rondas (ESTÁTICAS)
                 ordenTurnos.forEach(cod => {
                     const g = gruposTurnos[cod];
                     const abierto = turnosAbiertos.has(cod);
