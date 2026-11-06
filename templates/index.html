@@ -230,12 +230,12 @@
         </div>
     </div>
 
-    <!-- MODAL VISOR DE CORREO Y PDF INTEGRADO -->
+    <!-- MODAL VISOR DE CORREO Y PDF (Solo para Alertas/Novedades) -->
     <div class="modal fade" id="modalDetalleCorreo" tabindex="-1">
         <div class="modal-dialog modal-xl modal-dialog-centered">
             <div class="modal-content bg-dark text-light border border-secondary shadow-lg">
                 <div class="modal-header border-secondary bg-black">
-                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-file-pdf text-danger me-2"></i> Visor de Reporte y PDF Adjunto</h5>
+                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-file-pdf text-danger me-2"></i> Visor de Alerta y PDF Adjunto</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body" style="background-color: #181818;">
@@ -401,7 +401,7 @@
             });
         }
 
-        // Cargar y renderizar el PDF en Base64 directamente en el visor
+        // Visor de PDF (Únicamente para alertas y novedades)
         async function verDetalleReporte(reporteId) {
             const modal = new bootstrap.Modal(document.getElementById('modalDetalleCorreo'));
             modal.show();
@@ -647,7 +647,7 @@
                     primerRenderTurnos = false;
                 }
 
-                // Render Novedades
+                // Render Novedades (INTERACTIVAS - abren el PDF)
                 if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
                     contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
                 } else {
@@ -665,7 +665,7 @@
                             const ab = instNovAbiertas.has(clave);
                             let filas = '';
                             lista.forEach(n => { 
-                                filas += `<tr onclick="verDetalleReporte(${n.id})" title="Haz clic para abrir el PDF y detalle" style="cursor: pointer;">
+                                filas += `<tr onclick="verDetalleReporte(${n.id})" title="Haz clic para ver el PDF de la alerta" style="cursor: pointer;">
                                     <td><small class="text-warning">${n.fecha_envio}</small></td>
                                     <td><small class="text-light fw-bold"><i class="fa-solid fa-file-pdf text-danger me-1"></i> ${n.asunto}</small></td>
                                 </tr>`; 
@@ -693,7 +693,7 @@
                     });
                 }
 
-                // Render Rondas
+                // Render Rondas (ESTÁTICAS - solo registro, sin eventos de clic ni apertura de PDF)
                 ordenTurnos.forEach(cod => {
                     const g = gruposTurnos[cod];
                     const abierto = turnosAbiertos.has(cod);
@@ -707,7 +707,7 @@
                         const ab = instalacionesAbiertas.has(clave);
                         let filas = '';
                         lista.forEach((r, idx) => {
-                            filas += `<tr onclick="verDetalleReporte(${r.id})" title="Haz clic para ver el detalle y PDF" style="cursor: pointer;">
+                            filas += `<tr>
                                 <td><span class="badge bg-dark border text-secondary">Ronda #${lista.length - idx}</span></td>
                                 <td><small class="text-info">${r.usuario}</small></td>
                                 <td><small class="text-warning">${r.fecha_envio}</small></td>
@@ -720,7 +720,7 @@
                                     <div class="d-flex align-items-center gap-2"><i class="fa-solid fa-building text-info"></i><span class="fw-bold text-light small">RONDA - ${inst}</span></div>
                                     <div class="d-flex align-items-center gap-2"><span class="badge bg-success">${lista.length}</span><i id="inst-icono-${clave}" class="fa-solid fa-chevron-down text-secondary small chevron-turno ${ab?'rotado':''}"></i></div>
                                 </div>
-                                <div id="inst-body-${clave}" data-clave="${clave}" class="inst-grupo-body ${ab?'abierto':''}"><table class="table table-dark table-sm table-dark-custom table-hover m-0"><tbody>${filas}</tbody></table></div>
+                                <div id="inst-body-${clave}" data-clave="${clave}" class="inst-grupo-body ${ab?'abierto':''}"><table class="table table-dark table-sm table-dark-custom m-0"><tbody>${filas}</tbody></table></div>
                             </div>
                         `;
                     });
