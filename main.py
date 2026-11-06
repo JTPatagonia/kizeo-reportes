@@ -278,14 +278,15 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     if filename:
                         filename = decodificar_encabezado(filename)
 
+                    # Detección ultra flexible para Kizeo (PDF por tipo, nombre o binario)
                     es_pdf = (
                         content_type == "application/pdf" or 
                         (filename and ".pdf" in filename.lower()) or 
-                        ("name=" in str(part_m.get_content_type())) or
-                        (content_type == "application/octet-stream" and filename and ".pdf" in filename.lower())
+                        ("pdf" in content_type.lower()) or
+                        (filename and filename.endswith('.pdf'))
                     )
 
-                    if es_pdf or (filename and filename.endswith('.pdf')):
+                    if es_pdf:
                         try:
                             pdf_bytes = part_m.get_payload(decode=True)
                             if pdf_bytes:
@@ -314,49 +315,38 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     continue
 
                 uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}-{fecha_correo_str}"
-                if uid_unico in ids_existentes:
-                    continue
-
+                
+                # Si el reporte ya existe pero no tenía el PDF guardado, permitimos actualizarlo o limpiamos la base si se fuerza reconteo
                 tiene_pdf_bool = bool(pdf_base64)
 
                 if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
 
-                    nuevo_rep = ReporteKizeo(
-                        form_id=uid_unico,
-                        usuario=f"⚠️ ALERTA ({nombre_inst})",
-                        fecha_envio=fecha_correo_str,
-                        datos_json=json.dumps({
-                            "tipo": "NOVEDAD",
-                            "instalacion": nombre_inst,
-                            "asunto": asunto,
-                            "cuerpo": cuerpo_texto[:2500],
-                            "tiene_pdf": tiene_pdf_bool,
-                            "pdf_base64": pdf_base64,
-                            "nombre_pdf": nombre_pdf,
-                            "remitente": nombre_remitente,
-                            "turno_codigo": turno_cod_correo,
-                            "turno_etiqueta": turno_label_correo
-                        }, ensure_ascii=False)
-                    )
-                    db.session.add(nuevo_rep)
-                    ids_existentes.add(uid_unico)
-                    procesados += 1
-
-                elif "ronda" in asunto_limpio:
-                    inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
-                    if inst_obj:
-                        if turno_cod_correo == codigo_turno_actual:
-                            inst_obj.rondas += 1
-
+                    # Verificar si ya existe para actualizar el PDF si faltaba
+                    rep_existente = ReporteKizeo.query.filter_by(form_id=uid_unico).first()
+                    if rep_existente:
+                        if not json.loads(rep_existente.datos_json or '{}').get('tiene_pdf') and tiene_pdf_bool:
+                            rep_existente.datos_json = json.dumps({
+                                "tipo": "NOVEDAD",
+                                "instalacion": nombre_inst,
+                                "asunto": asunto,
+                                "cuerpo": cuerpo_texto[:2500],
+                                "tiene_pdf": tiene_pdf_bool,
+                                "pdf_base64": pdf_base64,
+                                "nombre_pdf": nombre_pdf,
+                                "remitente": nombre_remitente,
+                                "turno_codigo": turno_cod_correo,
+                                "turno_etiqueta": turno_label_correo
+                            }, ensure_ascii=False)
+                    else:
                         nuevo_rep = ReporteKizeo(
                             form_id=uid_unico,
-                            usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
+                            usuario=f"⚠️ ALERTA ({nombre_inst})",
                             fecha_envio=fecha_correo_str,
                             datos_json=json.dumps({
-                                "tipo": "RONDA",
-                                "instalacion": inst_obj.nombre,
+                                "tipo": "NOVEDAD",
+                                "instalacion": nombre_inst,
                                 "asunto": asunto,
                                 "cuerpo": cuerpo_texto[:2500],
                                 "tiene_pdf": tiene_pdf_bool,
@@ -368,8 +358,35 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             }, ensure_ascii=False)
                         )
                         db.session.add(nuevo_rep)
-                        ids_existentes.add(uid_unico)
                         procesados += 1
+
+                elif "ronda" in asunto_limpio:
+                    inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
+                    if inst_obj:
+                        if turno_cod_correo == codigo_turno_actual and not ReporteKizeo.query.filter_by(form_id=uid_unico).first():
+                            inst_obj.rondas += 1
+
+                        rep_existente = ReporteKizeo.query.filter_by(form_id=uid_unico).first()
+                        if not rep_existente:
+                            nuevo_rep = ReporteKizeo(
+                                form_id=uid_unico,
+                                usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
+                                fecha_envio=fecha_correo_str,
+                                datos_json=json.dumps({
+                                    "tipo": "RONDA",
+                                    "instalacion": inst_obj.nombre,
+                                    "asunto": asunto,
+                                    "cuerpo": cuerpo_texto[:2500],
+                                    "tiene_pdf": tiene_pdf_bool,
+                                    "pdf_base64": pdf_base64,
+                                    "nombre_pdf": nombre_pdf,
+                                    "remitente": nombre_remitente,
+                                    "turno_codigo": turno_cod_correo,
+                                    "turno_etiqueta": turno_label_correo
+                                }, ensure_ascii=False)
+                            )
+                            db.session.add(nuevo_rep)
+                            procesados += 1
 
         db.session.commit()
         recalcular_contadores_turno_actual()
