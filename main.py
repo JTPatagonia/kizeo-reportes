@@ -7,9 +7,10 @@ from email.header import decode_header
 from email.utils import parsedate_to_datetime
 import re
 import unicodedata
+import base64
 from datetime import datetime, timedelta
 import pytz
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, send_from_directory
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import db, ReporteKizeo
@@ -17,10 +18,6 @@ from database import db, ReporteKizeo
 app = Flask(__name__)
 CORS(app)
 app.secret_key = os.getenv('SECRET_KEY', 'central_monitoreo_secreto_2026')
-
-# Carpeta para almacenar los PDFs extraídos de los correos
-PDF_FOLDER = os.path.join(os.getcwd(), 'static', 'pdf_adjuntos')
-os.makedirs(PDF_FOLDER, exist_ok=True)
 
 database_url = os.getenv('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
@@ -270,8 +267,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
                 cuerpo_texto = ""
-                tiene_pdf = False
-                nombre_pdf_guardado = ""
+                pdf_base64 = ""
+                nombre_pdf = ""
 
                 if msg.is_multipart():
                     for part_m in msg.walk():
@@ -283,16 +280,13 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             if filename:
                                 filename = decodificar_encabezado(filename)
                                 if ".pdf" in filename.lower():
-                                    tiene_pdf = True
-                                    # Guardar el PDF físicamente en el servidor
-                                    safe_filename = f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]', '_', filename)}"
-                                    pdf_path = os.path.join(PDF_FOLDER, safe_filename)
                                     try:
-                                        with open(pdf_path, "wb") as f_pdf:
-                                            f_pdf.write(part_m.get_payload(decode=True))
-                                        nombre_pdf_guardado = safe_filename
+                                        pdf_bytes = part_m.get_payload(decode=True)
+                                        if pdf_bytes:
+                                            pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                                            nombre_pdf = filename
                                     except Exception:
-                                        tiene_pdf = False
+                                        pass
 
                         if content_type == "text/plain" and not cuerpo_texto:
                             try:
@@ -324,6 +318,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 if uid_unico in ids_existentes:
                     continue
 
+                tiene_pdf_bool = bool(pdf_base64)
+
                 if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
@@ -337,8 +333,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             "instalacion": nombre_inst,
                             "asunto": asunto,
                             "cuerpo": cuerpo_texto[:2500],
-                            "tiene_pdf": tiene_pdf,
-                            "nombre_pdf": nombre_pdf_guardado,
+                            "tiene_pdf": tiene_pdf_bool,
+                            "pdf_base64": pdf_base64,
+                            "nombre_pdf": nombre_pdf,
                             "remitente": nombre_remitente,
                             "turno_codigo": turno_cod_correo,
                             "turno_etiqueta": turno_label_correo
@@ -363,8 +360,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                                 "instalacion": inst_obj.nombre,
                                 "asunto": asunto,
                                 "cuerpo": cuerpo_texto[:2500],
-                                "tiene_pdf": tiene_pdf,
-                                "nombre_pdf": nombre_pdf_guardado,
+                                "tiene_pdf": tiene_pdf_bool,
+                                "pdf_base64": pdf_base64,
+                                "nombre_pdf": nombre_pdf,
                                 "remitente": nombre_remitente,
                                 "turno_codigo": turno_cod_correo,
                                 "turno_etiqueta": turno_label_correo
@@ -561,7 +559,7 @@ def obtener_historial():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Ruta para ver el detalle y visualizar el PDF adjunto
+# Ruta para ver el detalle y visualizar el PDF incrustado en Base64
 @app.route('/api/detalle-reporte/<int:reporte_id>', methods=['GET'])
 def obtener_detalle_reporte(reporte_id):
     if 'operador_id' not in session:
@@ -581,18 +579,12 @@ def obtener_detalle_reporte(reporte_id):
             "remitente": detalles.get('remitente', 'Desconocido'),
             "instalacion": detalles.get('instalacion', 'General'),
             "tiene_pdf": detalles.get('tiene_pdf', False),
-            "url_pdf": f"/ver-pdf/{detalles.get('nombre_pdf')}" if detalles.get('tiene_pdf') else "",
+            "pdf_base64": detalles.get('pdf_base64', ''),
+            "nombre_pdf": detalles.get('nombre_pdf', 'reporte.pdf'),
             "tipo": detalles.get('tipo', 'INFORME')
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-# Ruta para servir el archivo PDF adjunto
-@app.route('/ver-pdf/<path:filename>')
-def ver_pdf(filename):
-    if 'operador_id' not in session:
-        return redirect(url_for('login'))
-    return send_from_directory(PDF_FOLDER, filename)
 
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
@@ -664,6 +656,7 @@ def recibir_webhook():
                         "asunto": form_name,
                         "cuerpo": json.dumps(content, ensure_ascii=False),
                         "tiene_pdf": False,
+                        "pdf_base64": "",
                         "nombre_pdf": "",
                         "remitente": usuario,
                         "turno_codigo": turno_cod,
@@ -686,6 +679,7 @@ def recibir_webhook():
                         "asunto": form_name,
                         "cuerpo": json.dumps(content, ensure_ascii=False),
                         "tiene_pdf": False,
+                        "pdf_base64": "",
                         "nombre_pdf": "",
                         "remitente": usuario,
                         "turno_codigo": turno_cod,
