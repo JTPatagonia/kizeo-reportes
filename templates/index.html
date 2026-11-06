@@ -266,6 +266,7 @@
         let instNovAbiertas = new Set();
         let primerRenderTurnos = true;
         let ultimaAlertaIdConocida = null;
+        let ultimaRondaIdConocida = null;
 
         setInterval(() => {
             document.getElementById('reloj-central').innerText = new Date().toLocaleTimeString();
@@ -297,7 +298,6 @@
                 gain.connect(audioCtx.destination);
                 let time = audioCtx.currentTime;
                 
-                // Patrón de alerta de doble pitido fuerte
                 osc.frequency.setValueAtTime(800, time);
                 osc.frequency.setValueAtTime(1200, time + 0.15);
                 osc.frequency.setValueAtTime(800, time + 0.3);
@@ -306,9 +306,29 @@
                 gain.gain.setValueAtTime(0.3, time);
                 osc.start();
                 osc.stop(time + 0.65);
-            } catch(e) {
-                console.log("Audio bloqueado por el navegador hasta interactuar con la página", e);
-            }
+            } catch(e) {}
+        }
+
+        function reproducirSonidoRonda() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                let osc = audioCtx.createOscillator();
+                let gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                let time = audioCtx.currentTime;
+                
+                // Sonido corto tipo ring / timbre (tono limpio agudo)
+                osc.frequency.setValueAtTime(1046.50, time); // Nota Do (C6)
+                osc.frequency.setValueAtTime(1318.51, time + 0.1); // Nota Mi (E6)
+
+                gain.gain.setValueAtTime(0.2, time);
+                gain.gain.exponentialRampToValueAtTime(0.001, time + 0.35);
+                
+                osc.start();
+                osc.stop(time + 0.35);
+            } catch(e) {}
         }
 
         function togglePantallaCompletaMapa() {
@@ -533,6 +553,7 @@
                 let codigoActualGlobal = null;
                 let etiquetaActualGlobal = null;
                 let nuevaAlertaDetectada = false;
+                let nuevaRondaDetectada = false;
 
                 if (historial.length > 0) {
                     codigoActualGlobal = historial[0].turno_actual_codigo;
@@ -559,7 +580,6 @@
                     if (esNovedad) {
                         countNovedades++;
 
-                        // Detectar si esta alerta es más nueva que la última conocida (para emitir sonido)
                         if (ultimaAlertaIdConocida !== null && h.id > ultimaAlertaIdConocida) {
                             nuevaAlertaDetectada = true;
                         }
@@ -588,6 +608,14 @@
                             asunto: objDetalle.asunto || h.detalles
                         });
                     } else {
+                        // Detectar si ingresó una nueva ronda para emitir el ring corto
+                        if (ultimaRondaIdConocida !== null && h.id > ultimaRondaIdConocida) {
+                            nuevaRondaDetectada = true;
+                        }
+                        if (ultimaRondaIdConocida === null || h.id > ultimaRondaIdConocida) {
+                            ultimaRondaIdConocida = h.id;
+                        }
+
                         if (!gruposTurnos[tCodigo]) {
                             gruposTurnos[tCodigo] = { codigo: tCodigo, etiqueta: tEtiqueta, esActual: (tCodigo === codigoActualGlobal), rondas: [] };
                             ordenTurnos.push(tCodigo);
@@ -611,20 +639,24 @@
 
                 document.getElementById('contador-novedades').innerText = countNovedades;
 
-                // Si se detectó una alerta nueva durante el refresco automático, emitir sonido
+                // Gestionar sonidos automáticos
                 if (nuevaAlertaDetectada) {
                     reproducirSonidoAlerta();
-                } else if (ultimaAlertaIdConocida === null && countNovedades > 0) {
-                    // Inicializar referencia al cargar la página por primera vez sin hacer sonar
-                    let maxId = 0;
+                } else if (nuevaRondaDetectada) {
+                    reproducirSonidoRonda();
+                } else if (ultimaAlertaIdConocida === null || ultimaRondaIdConocida === null) {
+                    let maxNov = 0, maxRonda = 0;
                     historial.forEach(h => {
                         let d = {};
                         try { d = JSON.parse(h.detalles || '{}'); } catch(e){}
                         if ((h.usuario && (h.usuario.includes('NOVEDAD') || h.usuario.includes('ALERTA'))) || d.tipo === 'NOVEDAD') {
-                            if (h.id > maxId) maxId = h.id;
+                            if (h.id > maxNov) maxNov = h.id;
+                        } else {
+                            if (h.id > maxRonda) maxRonda = h.id;
                         }
                     });
-                    ultimaAlertaIdConocida = maxId;
+                    ultimaAlertaIdConocida = maxNov;
+                    ultimaRondaIdConocida = maxRonda;
                 }
 
                 if (primerRenderTurnos && codigoActualGlobal) {
@@ -633,7 +665,7 @@
                     primerRenderTurnos = false;
                 }
 
-                // Renderizar Novedades agrupadas
+                // Renderizar Novedades
                 if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
                     contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
                 } else {
@@ -721,7 +753,7 @@
                     });
                 }
 
-                // Renderizar Rondas agrupadas
+                // Renderizar Rondas
                 if (ordenTurnos.length === 0) {
                     contenedorTurnos.innerHTML = `<div class="text-center text-muted py-4">No hay turnos registrados aún.</div>`;
                     return;
