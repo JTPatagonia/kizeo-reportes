@@ -319,9 +319,8 @@
                 gain.connect(audioCtx.destination);
                 let time = audioCtx.currentTime;
                 
-                // Sonido corto tipo ring / timbre (tono limpio agudo)
-                osc.frequency.setValueAtTime(1046.50, time); // Nota Do (C6)
-                osc.frequency.setValueAtTime(1318.51, time + 0.1); // Nota Mi (E6)
+                osc.frequency.setValueAtTime(1046.50, time);
+                osc.frequency.setValueAtTime(1318.51, time + 0.1);
 
                 gain.gain.setValueAtTime(0.2, time);
                 gain.gain.exponentialRampToValueAtTime(0.001, time + 0.35);
@@ -608,7 +607,6 @@
                             asunto: objDetalle.asunto || h.detalles
                         });
                     } else {
-                        // Detectar si ingresó una nueva ronda para emitir el ring corto
                         if (ultimaRondaIdConocida !== null && h.id > ultimaRondaIdConocida) {
                             nuevaRondaDetectada = true;
                         }
@@ -639,7 +637,6 @@
 
                 document.getElementById('contador-novedades').innerText = countNovedades;
 
-                // Gestionar sonidos automáticos
                 if (nuevaAlertaDetectada) {
                     reproducirSonidoAlerta();
                 } else if (nuevaRondaDetectada) {
@@ -665,7 +662,6 @@
                     primerRenderTurnos = false;
                 }
 
-                // Renderizar Novedades
                 if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
                     contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
                 } else {
@@ -753,7 +749,6 @@
                     });
                 }
 
-                // Renderizar Rondas
                 if (ordenTurnos.length === 0) {
                     contenedorTurnos.innerHTML = `<div class="text-center text-muted py-4">No hay turnos registrados aún.</div>`;
                     return;

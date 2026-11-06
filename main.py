@@ -9,12 +9,14 @@ import re
 import unicodedata
 from datetime import datetime, timedelta
 import pytz
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
+from werkzeug.security import generate_password_hash, check_password_hash
 from database import db, ReporteKizeo
 
 app = Flask(__name__)
 CORS(app)
+app.secret_key = os.getenv('SECRET_KEY', 'central_monitoreo_secreto_2026')
 
 database_url = os.getenv('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
@@ -27,7 +29,6 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
 
-# Control de tiempo para sincronización automática sin saturar IMAP
 ultimo_chequeo_imap = 0
 
 class InstalacionDB(db.Model):
@@ -41,6 +42,23 @@ class InstalacionDB(db.Model):
     meta_rondas = db.Column(db.Integer, default=3)
     turno_activo = db.Column(db.String(50), default="")
 
+class Operador(db.Model):
+    __tablename__ = 'operador'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    nombre_completo = db.Column(db.String(150), nullable=False)
+
+class SesionOperador(db.Model):
+    __tablename__ = 'sesion_operador'
+    id = db.Column(db.Integer, primary_key=True)
+    operador_id = db.Column(db.Integer, db.ForeignKey('operador.id'), nullable=False)
+    nombre_operador = db.Column(db.String(150), nullable=False)
+    turno = db.Column(db.String(100), nullable=False)
+    login_time = db.Column(db.String(50), nullable=False)
+    logout_time = db.Column(db.String(50), nullable=True)
+    estado = db.Column(db.String(20), default="ACTIVO") # ACTIVO / CERRADO
+
 with app.app_context():
     db.create_all()
     try:
@@ -48,6 +66,16 @@ with app.app_context():
         db.session.commit()
     except Exception:
         db.session.rollback()
+
+    # Crear un operador administrador por defecto si no existe ninguno
+    if Operador.query.count() == 0:
+        admin = Operador(
+            username="admin",
+            password_hash=generate_password_hash("admin2026"),
+            nombre_completo="Administrador Central"
+        )
+        db.session.add(admin)
+        db.session.commit()
 
     if InstalacionDB.query.count() == 0:
         iniciales = [
@@ -90,12 +118,6 @@ def decodificar_encabezado(valor):
         return str(valor)
 
 def calcular_info_turno(dt_chile):
-    """
-    Recibe un datetime en hora de Chile y devuelve:
-    - codigo_turno (ej: 'NOCHE-2026-11-05')
-    - etiqueta_turno (ej: 'Día 05/11/2026 — Turno Nocturno (20:00 - 08:00)')
-    - inicio_turno_dt (datetime exacto de inicio de ese turno)
-    """
     if dt_chile.hour >= 20:
         inicio_turno = dt_chile.replace(hour=20, minute=0, second=0, microsecond=0)
         fecha_codigo = inicio_turno.strftime('%Y-%m-%d')
@@ -129,7 +151,6 @@ def verificar_y_actualizar_turnos():
                 inst.turno_activo = turno_actual
                 cambio_turno = True
         if cambio_turno:
-            # IMPORTANTE: Ya NO borramos ReporteKizeo para conservar el historial de turnos anteriores
             db.session.commit()
     except Exception as e:
         db.session.rollback()
@@ -144,9 +165,6 @@ def buscar_instalacion_en_texto(instalaciones, texto_limpio):
     return None
 
 def recalcular_contadores_turno_actual():
-    """
-    Asegura que la tabla de progreso muestre exactamente las rondas del turno activo en curso.
-    """
     codigo_turno_actual, _, _ = obtener_datos_turno_actual()
     instalaciones = InstalacionDB.query.all()
     conteo = {inst.nombre: 0 for inst in instalaciones}
@@ -194,7 +212,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
             mail.logout()
             return True, "Bandeja vacía", 0
 
-        # Descargamos los últimos 40 encabezados en un solo lote rápido para cubrir turnos recientes
         inicio = max(1, total_correos - 39)
         rango_lote = f"{inicio}:{total_correos}"
 
@@ -246,7 +263,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 except Exception:
                     continue
 
-                # Calcular a qué turno exacto pertenece este correo según su fecha y hora
                 turno_cod_correo, turno_label_correo, _ = calcular_info_turno(dt_correo_chile)
                 fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
@@ -262,7 +278,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 if uid_unico in ids_existentes:
                     continue
 
-                # A) ¿Es ALERTA o NOVEDAD?
                 if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
@@ -283,11 +298,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     ids_existentes.add(uid_unico)
                     procesados += 1
 
-                # B) ¿Es RONDA?
                 elif "ronda" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     if inst_obj:
-                        # Solo sumamos al contador en vivo si el correo pertenece al turno actual en curso
                         if turno_cod_correo == codigo_turno_actual:
                             inst_obj.rondas += 1
 
@@ -320,17 +333,125 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 pass
         return False, f"Error IMAP: {str(e)}", 0
 
+# --- RUTAS DE AUTENTICACIÓN Y AUDITORÍA DE OPERADORES ---
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'GET':
+        return render_template('login.html')
+    
+    data = request.json if request.is_json else request.form
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+
+    operador = Operador.query.filter_by(username=username).first()
+    if operador and check_password_hash(operador.password_hash, password):
+        session['operador_id'] = operador.id
+        session['nombre_operador'] = operador.nombre_completo
+
+        # Registrar inicio de sesión en auditoría
+        chile_tz = pytz.timezone('America/Santiago')
+        ahora_chile = datetime.now(chile_tz)
+        _, etiqueta_turno, _ = calcular_info_turno(ahora_chile)
+
+        nueva_sesion = SesionOperador(
+            operador_id=operador.id,
+            nombre_operador=operador.nombre_completo,
+            turno=etiqueta_turno,
+            login_time=ahora_chile.strftime('%d/%m/%Y %H:%M:%S'),
+            estado="ACTIVO"
+        )
+        db.session.add(nueva_sesion)
+        db.session.commit()
+        session['sesion_id'] = nueva_sesion.id
+
+        if request.is_json:
+            return jsonify({"status": "success", "redirect": "/"}), 200
+        return redirect(url_for('home'))
+    
+    if request.is_json:
+        return jsonify({"status": "error", "message": "Usuario o contraseña incorrectos"}), 401
+    return render_template('login.html', error="Usuario o contraseña incorrectos")
+
+@app.route('/logout', methods=['POST', 'GET'])
+def logout():
+    sesion_id = session.get('sesion_id')
+    if sesion_id:
+        sesion_op = SesionOperador.query.get(sesion_id)
+        if sesion_op and sesion_op.estado == "ACTIVO":
+            chile_tz = pytz.timezone('America/Santiago')
+            sesion_op.logout_time = datetime.now(chile_tz).strftime('%d/%m/%Y %H:%M:%S')
+            sesion_op.estado = "CERRADO"
+            db.session.commit()
+    
+    session.clear()
+    if request.is_json:
+        return jsonify({"status": "success", "redirect": "/login"}), 200
+    return redirect(url_for('login'))
+
+@app.route('/api/sesiones-auditoria', methods=['GET'])
+def obtener_auditoria_sesiones():
+    if 'operador_id' not in session:
+        return jsonify({"error": "No autorizado"}), 401
+    try:
+        sesiones = SesionOperador.query.order_by(SesionOperador.id.desc()).limit(50).all()
+        resultado = [{
+            "id": s.id,
+            "nombre": s.nombre_operador,
+            "turno": s.turno,
+            "login": s.login_time,
+            "logout": s.logout_time or "En turno activo...",
+            "estado": s.estado
+        } for s in sesiones]
+        return jsonify(resultado), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/api/crear-operador', methods=['POST'])
+def crear_operador():
+    if 'operador_id' not in session:
+        return jsonify({"error": "No autorizado"}), 401
+    try:
+        data = request.json
+        username = data.get('username', '').strip()
+        password = data.get('password', '').strip()
+        nombre = data.get('nombre_completo', '').strip()
+
+        if not username or not password or not nombre:
+            return jsonify({"error": "Faltan datos obligatorios"}), 400
+
+        existente = Operador.query.filter_by(username=username).first()
+        if existente:
+            return jsonify({"error": "El nombre de usuario ya existe"}), 400
+
+        nuevo_op = Operador(
+            username=username,
+            password_hash=generate_password_hash(password),
+            nombre_completo=nombre
+        )
+        db.session.add(nuevo_op)
+        db.session.commit()
+        return jsonify({"status": "success", "message": "Operador creado correctamente"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# --- RUTAS DE LA CENTRAL ---
+
 @app.route('/')
 def home():
-    return render_template('index.html')
+    if 'operador_id' not in session:
+        return redirect(url_for('login'))
+    return render_template('index.html', operador=session.get('nombre_operador'))
 
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
+    if 'operador_id' not in session:
+        return jsonify({"error": "No autorizado"}), 401
     global ultimo_chequeo_imap
     try:
         verificar_y_actualizar_turnos()
 
-        # SINCRONIZACIÓN AUTOMÁTICA SILENCIOSA CADA 30 SEGUNDOS
         ahora_ts = time.time()
         if (ahora_ts - ultimo_chequeo_imap) >= 30:
             verificar_correos_kizeo(forzar_reconteo=False)
@@ -354,7 +475,8 @@ def obtener_estado_instalaciones():
 
 @app.route('/api/verificar-correo', methods=['GET'])
 def disparar_verificacion_correo():
-    # Botón manual: sincroniza de inmediato sin esperar los 30s
+    if 'operador_id' not in session:
+        return jsonify({"error": "No autorizado"}), 401
     forzar = request.args.get('reconteo') == '1'
     ok, msg, procesados = verificar_correos_kizeo(forzar_reconteo=forzar)
     return jsonify({
@@ -365,6 +487,8 @@ def disparar_verificacion_correo():
 
 @app.route('/api/historial-rondas', methods=['GET'])
 def obtener_historial():
+    if 'operador_id' not in session:
+        return jsonify({"error": "No autorizado"}), 401
     try:
         codigo_actual, etiqueta_actual, _ = obtener_datos_turno_actual()
         reportes = ReporteKizeo.query.order_by(ReporteKizeo.id.desc()).limit(200).all()
@@ -383,6 +507,8 @@ def obtener_historial():
 
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
+    if 'operador_id' not in session:
+        return jsonify({"error": "No autorizado"}), 401
     try:
         data = request.json
         inst = InstalacionDB.query.get(data.get('id'))
@@ -396,6 +522,8 @@ def actualizar_meta():
 
 @app.route('/api/actualizar-ubicacion', methods=['POST'])
 def actualizar_ubicacion():
+    if 'operador_id' not in session:
+        return jsonify({"error": "No autorizado"}), 401
     try:
         data = request.json
         inst = InstalacionDB.query.get(data.get('id'))
