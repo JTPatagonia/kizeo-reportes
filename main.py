@@ -3,6 +3,7 @@ import json
 import imaplib
 import email
 from email.header import decode_header
+from email.utils import parsedate_to_datetime
 import re
 import unicodedata
 from datetime import datetime, timedelta
@@ -84,22 +85,30 @@ def decodificar_encabezado(valor):
     except Exception:
         return str(valor)
 
-def obtener_turno_actual():
+def obtener_datos_turno_actual():
+    """
+    Devuelve el identificador del turno actual y la fecha/hora exacta (en zona horaria de Chile)
+    en que comenzó este turno (a las 08:00 o a las 20:00).
+    """
     chile_tz = pytz.timezone('America/Santiago')
     ahora = datetime.now(chile_tz)
-    hora = ahora.hour
-    fecha_str = ahora.strftime('%Y-%m-%d')
     
-    if hora >= 20 or hora < 8:
-        if hora < 8:
-            fecha_str = (ahora - timedelta(days=1)).strftime('%Y-%m-%d')
-        return f"NOCHE-{fecha_str}"
+    if ahora.hour >= 20:
+        inicio_turno = ahora.replace(hour=20, minute=0, second=0, microsecond=0)
+        codigo_turno = f"NOCHE-{inicio_turno.strftime('%Y-%m-%d')}"
+    elif ahora.hour < 8:
+        ayer = ahora - timedelta(days=1)
+        inicio_turno = ayer.replace(hour=20, minute=0, second=0, microsecond=0)
+        codigo_turno = f"NOCHE-{inicio_turno.strftime('%Y-%m-%d')}"
     else:
-        return f"DIA-{fecha_str}"
+        inicio_turno = ahora.replace(hour=8, minute=0, second=0, microsecond=0)
+        codigo_turno = f"DIA-{inicio_turno.strftime('%Y-%m-%d')}"
+        
+    return codigo_turno, inicio_turno
 
 def verificar_y_actualizar_turnos():
     try:
-        turno_actual = obtener_turno_actual()
+        turno_actual, _ = obtener_datos_turno_actual()
         instalaciones = InstalacionDB.query.all()
         cambio_turno = False
         for inst in instalaciones:
@@ -108,6 +117,8 @@ def verificar_y_actualizar_turnos():
                 inst.turno_activo = turno_actual
                 cambio_turno = True
         if cambio_turno:
+            # Al cambiar de turno (08:00 o 20:00), limpiamos el historial del turno anterior
+            ReporteKizeo.query.delete()
             db.session.commit()
     except Exception as e:
         db.session.rollback()
@@ -132,7 +143,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         if not mail_user or not mail_password:
             return False, "Faltan variables MAIL_USER o MAIL_PASSWORD en Render", 0
 
-        # 1. Conectar y descargar TODOS los encabezados en UN SOLO VIAJE (tarda < 0.5 seg)
+        # 1. Descarga en lote de los últimos encabezados (< 0.5 seg)
         mail = imaplib.IMAP4_SSL(mail_server, timeout=8)
         mail.login(mail_user, mail_password)
         status, messages = mail.select('INBOX', readonly=True)
@@ -146,10 +157,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
             mail.logout()
             return True, "Bandeja vacía", 0
 
-        inicio = max(1, total_correos - 24)
+        inicio = max(1, total_correos - 29)
         rango_lote = f"{inicio}:{total_correos}"
 
-        # PETICIÓN ÚNICA EN LOTE (No hay bucle de red, descarga los 25 encabezados de golpe)
         status, data = mail.fetch(rango_lote, '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM MESSAGE-ID DATE)])')
         
         try:
@@ -160,17 +170,19 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         if status != 'OK' or not data:
             return False, "No se pudieron obtener encabezados", 0
 
-        # 2. Ya con los correos en memoria, procesamos rápido en la base de datos
+        # 2. Obtener la hora exacta de inicio del turno actual (ej: hoy 20:00:00 Chile)
+        chile_tz = pytz.timezone('America/Santiago')
+        codigo_turno, inicio_turno_dt = obtener_datos_turno_actual()
+
         if forzar_reconteo:
             ReporteKizeo.query.delete()
             for inst in InstalacionDB.query.all():
                 inst.rondas = 0
+                inst.turno_activo = codigo_turno
             db.session.commit()
 
         instalaciones = InstalacionDB.query.all()
         ids_existentes = set(r.form_id for r in ReporteKizeo.query.all() if r.form_id)
-        chile_tz = pytz.timezone('America/Santiago')
-        ahora_str = datetime.now(chile_tz).strftime('%Y-%m-%d %H:%M:%S')
 
         idx = 0
         for part in data:
@@ -185,10 +197,25 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 remitente = decodificar_encabezado(msg_hdr.get('From', ''))
                 msg_id = (msg_hdr.get('Message-ID') or '').strip()
                 date_hdr = decodificar_encabezado(msg_hdr.get('Date', ''))
-                fecha_correo = date_hdr[:25] if date_hdr else ahora_str
 
-                if not asunto:
+                if not asunto or not date_hdr:
                     continue
+
+                # Convertir la fecha del correo a hora oficial de Chile
+                try:
+                    dt_correo = parsedate_to_datetime(date_hdr)
+                    if dt_correo.tzinfo is None:
+                        dt_correo = pytz.utc.localize(dt_correo)
+                    dt_correo_chile = dt_correo.astimezone(chile_tz)
+                except Exception:
+                    continue
+
+                # FILTRO ESTRICTO DE TURNO:
+                # Si el correo llegó ANTES del inicio del turno actual (ej: antes de las 20:00), lo ignoramos
+                if dt_correo_chile < inicio_turno_dt:
+                    continue
+
+                fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
                 nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
                 asunto_limpio = limpiar_texto(asunto)
@@ -199,11 +226,11 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
                     continue
 
-                uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}"
+                uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}-{fecha_correo_str}"
                 if uid_unico in ids_existentes:
                     continue
 
-                # A) ¿Es ALERTA o NOVEDAD? -> Va a la tabla roja de Novedades, NO suma ronda
+                # A) ¿Es ALERTA o NOVEDAD dentro del turno actual? -> Va a Novedades, NO suma ronda
                 if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
@@ -211,7 +238,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     nuevo_rep = ReporteKizeo(
                         form_id=uid_unico,
                         usuario=f"⚠️ ALERTA ({nombre_inst})",
-                        fecha_envio=fecha_correo,
+                        fecha_envio=fecha_correo_str,
                         datos_json=json.dumps({
                             "tipo": "NOVEDAD",
                             "instalacion": nombre_inst,
@@ -222,7 +249,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     ids_existentes.add(uid_unico)
                     procesados += 1
 
-                # B) ¿Es RONDA? -> Busca instalación y suma +1
+                # B) ¿Es RONDA dentro del turno actual? -> Suma +1 a la instalación correspondiente
                 elif "ronda" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     if inst_obj:
@@ -230,7 +257,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                         nuevo_rep = ReporteKizeo(
                             form_id=uid_unico,
                             usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
-                            fecha_envio=fecha_correo,
+                            fecha_envio=fecha_correo_str,
                             datos_json=json.dumps({
                                 "tipo": "RONDA",
                                 "instalacion": inst_obj.nombre,
@@ -241,9 +268,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                         ids_existentes.add(uid_unico)
                         procesados += 1
 
-        # Un único commit a PostgreSQL al terminar el lote
         db.session.commit()
-        return True, "Sincronización instantánea completada", procesados
+        return True, f"Sincronizado turno actual (desde {inicio_turno_dt.strftime('%H:%M')} hrs)", procesados
 
     except Exception as e:
         db.session.rollback()
@@ -341,7 +367,7 @@ def recibir_webhook():
         usuario = content.get('user', {}).get('login', 'Guardia Kizeo')
         
         chile_tz = pytz.timezone('America/Santiago')
-        fecha = content.get('update_time') or datetime.now(chile_tz).strftime('%Y-%m-%d %H:%M:%S')
+        fecha = datetime.now(chile_tz).strftime('%d/%m/%Y %H:%M:%S')
         
         form_name = content.get('form_name', '')
         texto_webhook = limpiar_texto(f"{form_name} {json.dumps(content)}")
