@@ -198,7 +198,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
 
         ultimo_chequeo_imap = time.time()
 
-        mail = imaplib.IMAP4_SSL(mail_server, timeout=8)
+        mail = imaplib.IMAP4_SSL(mail_server, timeout=10)
         mail.login(mail_user, mail_password)
         status, messages = mail.select('INBOX', readonly=True)
         
@@ -214,7 +214,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         inicio = max(1, total_correos - 39)
         rango_lote = f"{inicio}:{total_correos}"
 
-        status, data = mail.fetch(rango_lote, '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM MESSAGE-ID DATE)])')
+        # Descargar mensaje completo para extraer cuerpo y adjuntos
+        status, data = mail.fetch(rango_lote, '(RFC822)')
         
         try:
             mail.logout()
@@ -222,7 +223,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
             pass
 
         if status != 'OK' or not data:
-            return False, "No se pudieron obtener encabezados", 0
+            return False, "No se pudieron obtener correos", 0
 
         chile_tz = pytz.timezone('America/Santiago')
         codigo_turno_actual, _, _ = obtener_datos_turno_actual()
@@ -241,15 +242,15 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         for part in data:
             if isinstance(part, tuple) and len(part) >= 2:
                 idx += 1
-                raw_header = part[1]
-                if not raw_header:
+                raw_msg = part[1]
+                if not raw_msg:
                     continue
 
-                msg_hdr = email.message_from_bytes(raw_header)
-                asunto = decodificar_encabezado(msg_hdr.get('Subject', ''))
-                remitente = decodificar_encabezado(msg_hdr.get('From', ''))
-                msg_id = (msg_hdr.get('Message-ID') or '').strip()
-                date_hdr = decodificar_encabezado(msg_hdr.get('Date', ''))
+                msg = email.message_from_bytes(raw_msg)
+                asunto = decodificar_encabezado(msg.get('Subject', ''))
+                remitente = decodificar_encabezado(msg.get('From', ''))
+                msg_id = (msg.get('Message-ID') or '').strip()
+                date_hdr = decodificar_encabezado(msg.get('Date', ''))
 
                 if not asunto or not date_hdr:
                     continue
@@ -264,6 +265,42 @@ def verificar_correos_kizeo(forzar_reconteo=False):
 
                 turno_cod_correo, turno_label_correo, _ = calcular_info_turno(dt_correo_chile)
                 fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
+
+                # Extraer cuerpo del correo y adjuntos PDF
+                cuerpo_texto = ""
+                tiene_pdf = False
+                nombre_pdf = ""
+
+                if msg.is_multipart():
+                    for part_m in msg.walk():
+                        content_type = part_m.get_content_type()
+                        content_disposition = str(part_m.get("Content-Disposition"))
+                        
+                        if "attachment" in content_disposition or "filename" in content_disposition:
+                            filename = part_m.get_filename()
+                            if filename:
+                                filename = decodificar_encabezado(filename)
+                                if ".pdf" in filename.lower():
+                                    tiene_pdf = True
+                                    nombre_pdf = filename
+
+                        if content_type == "text/plain" and not cuerpo_texto:
+                            try:
+                                payload = part_m.get_payload(decode=True)
+                                charset = part_m.get_content_charset() or 'utf-8'
+                                cuerpo_texto = payload.decode(charset, errors='ignore')
+                            except Exception:
+                                pass
+                else:
+                    try:
+                        payload = msg.get_payload(decode=True)
+                        charset = msg.get_content_charset() or 'utf-8'
+                        cuerpo_texto = payload.decode(charset, errors='ignore')
+                    except Exception:
+                        pass
+
+                if not cuerpo_texto:
+                    cuerpo_texto = asunto
 
                 nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
                 asunto_limpio = limpiar_texto(asunto)
@@ -289,6 +326,10 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             "tipo": "NOVEDAD",
                             "instalacion": nombre_inst,
                             "asunto": asunto,
+                            "cuerpo": cuerpo_texto[:2500], # Guardar texto del correo
+                            "tiene_pdf": tiene_pdf,
+                            "nombre_pdf": nombre_pdf,
+                            "remitente": nombre_remitente,
                             "turno_codigo": turno_cod_correo,
                             "turno_etiqueta": turno_label_correo
                         }, ensure_ascii=False)
@@ -311,6 +352,10 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                                 "tipo": "RONDA",
                                 "instalacion": inst_obj.nombre,
                                 "asunto": asunto,
+                                "cuerpo": cuerpo_texto[:2500],
+                                "tiene_pdf": tiene_pdf,
+                                "nombre_pdf": nombre_pdf,
+                                "remitente": nombre_remitente,
                                 "turno_codigo": turno_cod_correo,
                                 "turno_etiqueta": turno_label_correo
                             }, ensure_ascii=False)
@@ -404,12 +449,10 @@ def obtener_auditoria_sesiones():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/crear-operador', methods=['POST'])
-@app.route('/api/crear-operador', methods=['POST'])
 def crear_operador():
     if 'operador_id' not in session:
         return jsonify({"error": "No autorizado"}), 401
     
-    # Validar estrictamente que solo el usuario 'admin' pueda crear operadores
     operador_actual = Operador.query.get(session.get('operador_id'))
     if not operador_actual or operador_actual.username != 'admin':
         return jsonify({"error": "Acceso denegado. Solo el administrador puede registrar nuevos operadores."}), 403
@@ -508,6 +551,32 @@ def obtener_historial():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# Ruta para ver el detalle completo de un reporte al hacer clic
+@app.route('/api/detalle-reporte/<int:reporte_id>', methods=['GET'])
+def obtener_detalle_reporte(reporte_id):
+    if 'operador_id' not in session:
+        return jsonify({"error": "No autorizado"}), 401
+    try:
+        rep = ReporteKizeo.query.get(reporte_id)
+        if not rep:
+            return jsonify({"error": "Reporte no encontrado"}), 404
+        
+        detalles = json.loads(rep.datos_json or '{}')
+        return jsonify({
+            "id": rep.id,
+            "usuario": rep.usuario,
+            "fecha_envio": rep.fecha_envio,
+            "asunto": detalles.get('asunto', 'Sin asunto'),
+            "cuerpo": detalles.get('cuerpo', 'Sin contenido en el cuerpo del mensaje.'),
+            "remitente": detalles.get('remitente', 'Desconocido'),
+            "instalacion": detalles.get('instalacion', 'General'),
+            "tiene_pdf": detalles.get('tiene_pdf', False),
+            "nombre_pdf": detalles.get('nombre_pdf', 'Reporte.pdf'),
+            "tipo": detalles.get('tipo', 'INFORME')
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
     if 'operador_id' not in session:
@@ -576,6 +645,10 @@ def recibir_webhook():
                         "tipo": "NOVEDAD",
                         "instalacion": nombre_inst,
                         "asunto": form_name,
+                        "cuerpo": json.dumps(content, ensure_ascii=False),
+                        "tiene_pdf": False,
+                        "nombre_pdf": "",
+                        "remitente": usuario,
                         "turno_codigo": turno_cod,
                         "turno_etiqueta": turno_label
                     }, ensure_ascii=False)
@@ -591,9 +664,13 @@ def recibir_webhook():
                     usuario=str(usuario),
                     fecha_envio=str(fecha),
                     datos_json=json.dumps({
-                        "type": "RONDA",
+                        "tipo": "RONDA",
                         "instalacion": nombre_inst,
                         "asunto": form_name,
+                        "cuerpo": json.dumps(content, ensure_ascii=False),
+                        "tiene_pdf": False,
+                        "nombre_pdf": "",
+                        "remitente": usuario,
                         "turno_codigo": turno_cod,
                         "turno_etiqueta": turno_label
                     }, ensure_ascii=False)

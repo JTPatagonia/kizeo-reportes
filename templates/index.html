@@ -230,6 +230,39 @@
         </div>
     </div>
 
+    <!-- MODAL VISOR DE CORREO Y PDF -->
+    <div class="modal fade" id="modalDetalleCorreo" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content bg-dark text-light border border-secondary shadow-lg">
+                <div class="modal-header border-secondary bg-black">
+                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-envelope-open-text me-2"></i> Detalle del Reporte y Correo</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" style="background-color: #181818;">
+                    <div class="mb-3 p-3 bg-black rounded border border-secondary">
+                        <div class="small text-warning mb-1"><strong class="text-light">Remitente:</strong> <span id="correo-remitente">-</span></div>
+                        <div class="small text-warning mb-1"><strong class="text-light">Fecha y Hora:</strong> <span id="correo-fecha">-</span></div>
+                        <div class="small text-warning"><strong class="text-light">Asunto:</strong> <span id="correo-asunto" class="fw-bold text-light">-</span></div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small text-secondary fw-semibold">Contenido del Correo / Reporte:</label>
+                        <div id="correo-cuerpo" class="p-3 rounded border border-secondary bg-dark text-light" style="max-height: 250px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 13px;">Cargando...</div>
+                    </div>
+                    <div id="contenedor-pdf-adjunto" class="d-none alert alert-secondary py-2 d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="fa-solid fa-file-pdf text-danger fa-lg me-2"></i>
+                            <span id="nombre-archivo-pdf" class="fw-bold small text-light">documento.pdf</span>
+                        </div>
+                        <span class="badge bg-danger small">Archivo adjunto en el correo original</span>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary bg-black">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     {% if es_admin %}
     <!-- MODAL DE CREAR OPERADOR -->
     <div class="modal fade" id="modalCrearOperador" tabindex="-1">
@@ -293,7 +326,7 @@
         const API_URL = "/api/estado-instalaciones";
         const HISTORIAL_URL = "/api/historial-rondas";
 
-        // Sirena de emergencia real de 5 segundos de duración
+        // Sirena de emergencia de 5 segundos con onda sawtooth
         function reproducirSonidoAlerta() {
             try {
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -305,7 +338,7 @@
                 gain.connect(audioCtx.destination);
                 
                 let time = audioCtx.currentTime;
-                let duracionTotal = 5.0; // 5 segundos exactos
+                let duracionTotal = 5.0; 
                 let ciclos = 5;
                 let paso = duracionTotal / (ciclos * 2);
                 
@@ -372,6 +405,38 @@
                     </tr>
                 `;
             });
+        }
+
+        // Función para abrir el detalle completo del correo al hacer clic en una fila
+        async function verDetalleReporte(reporteId) {
+            const modal = new bootstrap.Modal(document.getElementById('modalDetalleCorreo'));
+            modal.show();
+            
+            document.getElementById('correo-remitente').innerText = "Cargando...";
+            document.getElementById('correo-fecha').innerText = "Cargando...";
+            document.getElementById('correo-asunto').innerText = "Cargando...";
+            document.getElementById('correo-cuerpo').innerText = "Obteniendo contenido del servidor...";
+            document.getElementById('contenedor-pdf-adjunto').classList.add('d-none');
+
+            try {
+                const res = await fetch(`/api/detalle-reporte/${reporteId}`);
+                const data = await res.json();
+                if (res.ok) {
+                    document.getElementById('correo-remitente').innerText = data.remitente;
+                    document.getElementById('correo-fecha').innerText = data.fecha_envio;
+                    document.getElementById('correo-asunto').innerText = data.asunto;
+                    document.getElementById('correo-cuerpo').innerText = data.cuerpo;
+
+                    if (data.tiene_pdf) {
+                        document.getElementById('nombre-archivo-pdf').innerText = data.nombre_pdf;
+                        document.getElementById('contenedor-pdf-adjunto').classList.remove('d-none');
+                    }
+                } else {
+                    document.getElementById('correo-cuerpo').innerText = "Error al cargar el detalle del reporte.";
+                }
+            } catch (e) {
+                document.getElementById('correo-cuerpo').innerText = "Error de conexión con el servidor.";
+            }
         }
 
         function abrirModalCrearOperador() {
@@ -575,7 +640,7 @@
                     primerRenderTurnos = false;
                 }
 
-                // Render Novedades
+                // Render Novedades (con evento onclick para abrir el correo completo)
                 if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
                     contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
                 } else {
@@ -592,14 +657,19 @@
                             const clave = `nov_${cod}_${inst.replace(/[^a-zA-Z0-9]/g,'')}`;
                             const ab = instNovAbiertas.has(clave);
                             let filas = '';
-                            lista.forEach(n => { filas += `<tr><td><small class="text-warning">${n.fecha_envio}</small></td><td><small class="text-light fw-bold">${n.asunto}</small></td></tr>`; });
+                            lista.forEach(n => { 
+                                filas += `<tr onclick="verDetalleReporte(${n.id})" title="Haz clic para ver el correo y PDF completo" style="cursor: pointer;">
+                                    <td><small class="text-warning">${n.fecha_envio}</small></td>
+                                    <td><small class="text-light fw-bold"><i class="fa-solid fa-envelope me-1 text-info"></i> ${n.asunto}</small></td>
+                                </tr>`; 
+                            });
                             subHTML += `
                                 <div class="nov-grupo-item">
                                     <div class="nov-grupo-header" onclick="toggleInstalacionNovAcordeon('${clave}')">
                                         <div class="d-flex align-items-center gap-2"><i class="fa-solid fa-triangle-exclamation text-danger"></i><span class="fw-bold text-light small">${inst}</span></div>
                                         <div class="d-flex align-items-center gap-2"><span class="badge bg-danger">${lista.length}</span><i id="inst-nov-icono-${clave}" class="fa-solid fa-chevron-down text-secondary small chevron-turno ${ab?'rotado':''}"></i></div>
                                     </div>
-                                    <div id="inst-nov-body-${clave}" class="nov-grupo-body ${ab?'abierto':''}"><table class="table table-dark table-sm table-dark-custom m-0"><tbody>${filas}</tbody></table></div>
+                                    <div id="inst-nov-body-${clave}" class="nov-grupo-body ${ab?'abierto':''}"><table class="table table-dark table-sm table-dark-custom table-hover m-0"><tbody>${filas}</tbody></table></div>
                                 </div>
                             `;
                         });
@@ -616,7 +686,7 @@
                     });
                 }
 
-                // Render Rondas
+                // Render Rondas (con evento onclick para abrir el detalle)
                 ordenTurnos.forEach(cod => {
                     const g = gruposTurnos[cod];
                     const abierto = turnosAbiertos.has(cod);
@@ -630,7 +700,12 @@
                         const ab = instalacionesAbiertas.has(clave);
                         let filas = '';
                         lista.forEach((r, idx) => {
-                            filas += `<tr><td><span class="badge bg-dark border text-secondary">Ronda #${lista.length - idx}</span></td><td><small class="text-info">${r.usuario}</small></td><td><small class="text-warning">${r.fecha_envio}</small></td><td><small class="text-light">${r.asunto}</small></td></tr>`;
+                            filas += `<tr onclick="verDetalleReporte(${r.id})" title="Haz clic para ver el detalle" style="cursor: pointer;">
+                                <td><span class="badge bg-dark border text-secondary">Ronda #${lista.length - idx}</span></td>
+                                <td><small class="text-info">${r.usuario}</small></td>
+                                <td><small class="text-warning">${r.fecha_envio}</small></td>
+                                <td><small class="text-light">${r.asunto}</small></td>
+                            </tr>`;
                         });
                         subHTML += `
                             <div class="inst-grupo-item">
@@ -638,7 +713,7 @@
                                     <div class="d-flex align-items-center gap-2"><i class="fa-solid fa-building text-info"></i><span class="fw-bold text-light small">RONDA - ${inst}</span></div>
                                     <div class="d-flex align-items-center gap-2"><span class="badge bg-success">${lista.length}</span><i id="inst-icono-${clave}" class="fa-solid fa-chevron-down text-secondary small chevron-turno ${ab?'rotado':''}"></i></div>
                                 </div>
-                                <div id="inst-body-${clave}" data-clave="${clave}" class="inst-grupo-body ${ab?'abierto':''}"><table class="table table-dark table-sm table-dark-custom m-0"><tbody>${filas}</tbody></table></div>
+                                <div id="inst-body-${clave}" data-clave="${clave}" class="inst-grupo-body ${ab?'abierto':''}"><table class="table table-dark table-sm table-dark-custom table-hover m-0"><tbody>${filas}</tbody></table></div>
                             </div>
                         `;
                     });
