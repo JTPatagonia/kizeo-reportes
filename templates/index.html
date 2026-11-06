@@ -40,7 +40,6 @@
             border: 1px solid #555 !important;
         }
 
-        .badge-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
         .table-hover tbody tr:hover { background-color: #2a2a2a !important; cursor: pointer; }
         
         @keyframes alertPulse {
@@ -49,7 +48,7 @@
             100% { transform: scale(1); filter: drop-shadow(0 0 4px rgba(220, 53, 69, 0.9)); }
         }
 
-        /* Iconos del mapa más grandes y visibles */
+        /* Iconos del mapa grandes */
         .marker-triangulo {
             color: white;
             width: 38px;
@@ -61,9 +60,7 @@
             filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.95));
             transition: transform 0.15s ease;
         }
-        .marker-triangulo:hover {
-            transform: scale(1.25);
-        }
+        .marker-triangulo:hover { transform: scale(1.25); }
         .marker-critico { animation: alertPulse 1.2s infinite; }
 
         @keyframes emergencyFlash {
@@ -74,6 +71,43 @@
         .emergency-active { animation: emergencyFlash 0.8s infinite; border: 3px solid #ffc107 !important; }
         .table-dark-custom { background-color: #1e1e1e; color: #e0e0e0; }
         .table-dark-custom th, .table-dark-custom td { border-color: #333; }
+
+        /* Estilos para las carpetas desplegables de Turnos */
+        .turno-item {
+            background-color: #181818;
+            border: 1px solid #343a40;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            overflow: hidden;
+        }
+        .turno-header {
+            padding: 10px 14px;
+            background-color: #23272b;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color 0.2s ease;
+            user-select: none;
+        }
+        .turno-header:hover {
+            background-color: #2c3136;
+        }
+        .turno-body {
+            display: none;
+            padding: 8px;
+            background-color: #141619;
+            border-top: 1px solid #333;
+        }
+        .turno-body.abierto {
+            display: block;
+        }
+        .chevron-turno {
+            transition: transform 0.2s ease;
+        }
+        .chevron-turno.rotado {
+            transform: rotate(180deg);
+        }
     </style>
 </head>
 <body>
@@ -84,8 +118,11 @@
                 <i class="fa-solid fa-shield-halved text-danger me-2"></i> CENTRAL DE MONITOREO 24/7 — KIZEO AUTOMÁTICO
             </span>
             <div class="d-flex align-items-center gap-3">
+                <span class="badge bg-dark border border-info text-info px-2 py-2" title="Los correos se sincronizan automáticamente cada 30 segundos">
+                    <i id="icono-autosync" class="fa-solid fa-satellite-dish me-1"></i> Auto-Sync: <span id="timer-sync">30s</span>
+                </span>
                 <button id="btn-sync" onclick="forzarVerificacion()" class="btn btn-outline-warning btn-sm fw-bold">
-                    <i id="icono-sync" class="fa-solid fa-sync me-1"></i> Sincronizar Correos
+                    <i id="icono-sync" class="fa-solid fa-sync me-1"></i> Sincronizar Ahora
                 </button>
                 <span id="banner-alerta-global" class="badge bg-danger px-3 py-2 fs-6 d-none"><i class="fa-solid fa-triangle-exclamation me-1"></i> ¡HAY INSTALACIONES SIN RONDAS!</span>
                 <span class="badge bg-success px-3 py-2 fs-6"><i class="fa-solid fa-circle-check me-1"></i> EN VIVO (RENDER)</span>
@@ -127,8 +164,11 @@
                 </div>
 
                 <div class="card card-custom p-3 shadow-sm mb-3">
-                    <h5 class="fw-semibold mb-3 text-light"><i class="fa-solid fa-list-check text-info me-2"></i> Progreso de Rondas (Turno Actual)</h5>
-                    <div class="table-responsive" style="max-height: 240px; overflow-y: auto;">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="fw-semibold m-0 text-light"><i class="fa-solid fa-list-check text-info me-2"></i> Progreso (Turno Actual)</h5>
+                    </div>
+                    <div id="subtitulo-turno-actual" class="small text-warning fw-semibold mb-2">Cargando turno...</div>
+                    <div class="table-responsive" style="max-height: 230px; overflow-y: auto;">
                         <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
                             <thead>
                                 <tr>
@@ -146,7 +186,7 @@
             </div>
         </div>
 
-        <!-- SECCIÓN SEPARADA: PLANO DE NOVEDADES Y PLANO DE RONDAS -->
+        <!-- SECCIÓN SEPARADA: PLANO DE NOVEDADES Y REGISTRO DE TURNOS DESPLEGABLE -->
         <div class="row g-3">
             <!-- Plano Aparte: Novedades y Alertas -->
             <div class="col-lg-5">
@@ -155,7 +195,7 @@
                         <h5 class="fw-bold text-danger m-0"><i class="fa-solid fa-bell fa-shake me-2"></i> Registro de Novedades / Alertas</h5>
                         <span id="contador-novedades" class="badge bg-danger">0</span>
                     </div>
-                    <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
+                    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
                         <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
                             <thead>
                                 <tr>
@@ -171,24 +211,17 @@
                 </div>
             </div>
 
-            <!-- Plano de Historial de Rondas Normales -->
+            <!-- Plano de Historial de Rondas Agrupado por Turno (Acordeón Desplegable) -->
             <div class="col-lg-7">
                 <div class="card card-custom p-3 shadow-sm h-100">
-                    <h5 class="fw-semibold mb-3 text-light"><i class="fa-solid fa-clock-rotate-left text-warning me-2"></i> Historial de Rondas Registradas</h5>
-                    <div class="table-responsive" style="max-height: 250px; overflow-y: auto;">
-                        <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
-                            <thead>
-                                <tr>
-                                    <th>ID</th>
-                                    <th>Origen / Guardia</th>
-                                    <th>Fecha y Hora</th>
-                                    <th>Detalles de la Ronda</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tabla-historial">
-                                <!-- Historial de rondas cargado desde PostgreSQL -->
-                            </tbody>
-                        </table>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-semibold m-0 text-light">
+                            <i class="fa-solid fa-folder-tree text-warning me-2"></i> Historial de Turnos y Rondas 
+                            <small class="text-secondary fs-6 ms-1">(Haz clic en un turno para ver sus rondas)</small>
+                        </h5>
+                    </div>
+                    <div id="contenedor-turnos" style="max-height: 300px; overflow-y: auto; padding-right: 4px;">
+                        <!-- Bloques de turno cargados dinámicamente -->
                     </div>
                 </div>
             </div>
@@ -197,8 +230,19 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
+        let segundosParaSync = 15;
+        // Recordar qué turnos tiene abiertos el usuario para no cerrarlos al auto-refrescar
+        let turnosAbiertos = new Set();
+        let primerRenderTurnos = true;
+
         setInterval(() => {
             document.getElementById('reloj-central').innerText = new Date().toLocaleTimeString();
+            segundosParaSync--;
+            if (segundosParaSync <= 0) {
+                segundosParaSync = 15;
+                cicloAutomatico();
+            }
+            document.getElementById('timer-sync').innerText = segundosParaSync + 's';
         }, 1000);
 
         const map = L.map('map').setView([-33.4489, -70.6693], 10);
@@ -211,7 +255,6 @@
         const API_URL = "/api/estado-instalaciones";
         const HISTORIAL_URL = "/api/historial-rondas";
 
-        // Función para alternar el mapa en pantalla completa con bordes
         function togglePantallaCompletaMapa() {
             const contenedor = document.getElementById('contenedor-mapa');
             const icono = document.getElementById('icono-fullscreen');
@@ -231,13 +274,11 @@
                 btn.classList.replace('btn-danger', 'btn-outline-info');
             }
 
-            // Reajustar el renderizado de Leaflet tras el cambio de tamaño
             setTimeout(() => {
                 map.invalidateSize();
             }, 260);
         }
 
-        // Permitir salir del modo pantalla completa con la tecla ESC
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 const contenedor = document.getElementById('contenedor-mapa');
@@ -257,6 +298,10 @@
                 tbody.innerHTML = '';
                 let criticos = false;
 
+                if (instalaciones.length > 0 && instalaciones[0].turno_etiqueta) {
+                    document.getElementById('subtitulo-turno-actual').innerHTML = `<i class="fa-regular fa-calendar-check me-1"></i> ${instalaciones[0].turno_etiqueta}`;
+                }
+
                 instalaciones.forEach(inst => {
                     let colorHex = '#dc3545';
                     let extraClass = 'marker-critico';
@@ -271,7 +316,6 @@
                         criticos = true;
                     }
 
-                    // Icono más grande (38x38 y fa-2x)
                     const customIcon = L.divIcon({ 
                         html: `<div class="marker-triangulo ${extraClass}" style="color: ${colorHex};"><i class="fa-solid fa-triangle-exclamation fa-2x"></i></div>`, 
                         className: '', 
@@ -321,27 +365,20 @@
             }
         }
 
-        async function forzarVerificacion() {
-            const btn = document.getElementById('btn-sync');
-            const icono = document.getElementById('icono-sync');
-            btn.disabled = true;
-            icono.classList.add('fa-spin');
+        function toggleTurnoAcordeon(codigoTurno) {
+            const body = document.getElementById(`cuerpo-${codigoTurno}`);
+            const icono = document.getElementById(`icono-${codigoTurno}`);
+            if (!body) return;
 
-            try {
-                const res = await fetch('/api/verificar-correo');
-                const data = await res.json();
-                if (res.ok && data.status === "success") {
-                    alert(`¡Sincronización exitosa! Correos procesados en bandeja: ${data.procesados || 0}`);
-                } else {
-                    alert("Aviso del servidor: " + (data.message || "Error desconocido"));
-                }
-                await cargarDatosEnVivo();
-                await cargarHistorial();
-            } catch (e) {
-                alert("Error de red al conectar con el servidor: " + e.message);
-            } finally {
-                btn.disabled = false;
-                icono.classList.remove('fa-spin');
+            const estaAbierto = body.classList.contains('abierto');
+            if (estaAbierto) {
+                body.classList.remove('abierto');
+                if (icono) icono.classList.remove('rotado');
+                turnosAbiertos.delete(codigoTurno);
+            } else {
+                body.classList.add('abierto');
+                if (icono) icono.classList.add('rotado');
+                turnosAbiertos.add(codigoTurno);
             }
         }
 
@@ -350,17 +387,39 @@
                 const response = await fetch(HISTORIAL_URL);
                 const historial = await response.json();
                 
-                const tbodyRondas = document.getElementById('tabla-historial');
+                const contenedorTurnos = document.getElementById('contenedor-turnos');
                 const tbodyNovedades = document.getElementById('tabla-novedades');
-                tbodyRondas.innerHTML = '';
                 tbodyNovedades.innerHTML = '';
 
                 let countNovedades = 0;
-                let countRondas = 0;
+                const gruposTurnos = {};
+                const ordenTurnos = [];
+
+                let codigoActualGlobal = null;
+                let etiquetaActualGlobal = null;
+
+                if (historial.length > 0) {
+                    codigoActualGlobal = historial[0].turno_actual_codigo;
+                    etiquetaActualGlobal = historial[0].turno_actual_etiqueta;
+                }
+
+                // Asegurar que el turno actual figure siempre arriba aunque tenga 0 rondas
+                if (codigoActualGlobal && etiquetaActualGlobal) {
+                    gruposTurnos[codigoActualGlobal] = {
+                        codigo: codigoActualGlobal,
+                        etiqueta: etiquetaActualGlobal,
+                        esActual: true,
+                        rondas: []
+                    };
+                    ordenTurnos.push(codigoActualGlobal);
+                }
 
                 historial.forEach(h => {
                     let objDetalle = {};
                     try { objDetalle = JSON.parse(h.detalles || '{}'); } catch(e) {}
+
+                    const tCodigo = objDetalle.turno_codigo || codigoActualGlobal || 'SIN-TURNO';
+                    const tEtiqueta = objDetalle.turno_etiqueta || etiquetaActualGlobal || 'Turno Registrado';
 
                     const esNovedad = (h.usuario && (h.usuario.includes('NOVEDAD') || h.usuario.includes('ALERTA'))) || objDetalle.tipo === 'NOVEDAD';
 
@@ -370,7 +429,10 @@
                         const rowNov = document.createElement('tr');
                         rowNov.style.backgroundColor = 'rgba(220, 53, 69, 0.2)';
                         rowNov.innerHTML = `
-                            <td><small class="text-warning">${h.fecha_envio || 'Reciente'}</small></td>
+                            <td>
+                                <small class="text-warning d-block">${h.fecha_envio || 'Reciente'}</small>
+                                <span class="badge bg-secondary" style="font-size: 10px;">${tEtiqueta}</span>
+                            </td>
                             <td>
                                 <span class="badge bg-danger mb-1">NOVEDAD</span><br>
                                 <small class="fw-bold text-light">${asuntoLimpio}</small>
@@ -378,30 +440,129 @@
                         `;
                         tbodyNovedades.appendChild(rowNov);
                     } else {
-                        countRondas++;
-                        const textoMostrar = objDetalle.asunto ? `${objDetalle.instalacion || ''} — ${objDetalle.asunto}` : h.detalles;
-                        const row = document.createElement('tr');
-                        row.innerHTML = `
-                            <td><small class="text-muted">#${h.id}</small></td>
-                            <td><span class="fw-semibold text-info">${h.usuario}</span></td>
-                            <td><small>${h.fecha_envio || 'Registrado'}</small></td>
-                            <td><small class="text-truncate d-inline-block" style="max-width: 380px;" title="${textoMostrar}">${textoMostrar}</small></td>
-                        `;
-                        tbodyRondas.appendChild(row);
+                        if (!gruposTurnos[tCodigo]) {
+                            gruposTurnos[tCodigo] = {
+                                codigo: tCodigo,
+                                etiqueta: tEtiqueta,
+                                esActual: (tCodigo === codigoActualGlobal),
+                                rondas: []
+                            };
+                            ordenTurnos.push(tCodigo);
+                        }
+                        gruposTurnos[tCodigo].rondas.push({
+                            id: h.id,
+                            usuario: h.usuario,
+                            fecha_envio: h.fecha_envio,
+                            instalacion: objDetalle.instalacion || '',
+                            asunto: objDetalle.asunto || h.detalles
+                        });
                     }
                 });
 
                 document.getElementById('contador-novedades').innerText = countNovedades;
-
                 if (countNovedades === 0) {
                     tbodyNovedades.innerHTML = `<tr><td colspan="2" class="text-center text-muted py-3">Sin novedades ni alertas registradas.</td></tr>`;
                 }
-                if (countRondas === 0) {
-                    tbodyRondas.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-3">No hay rondas registradas aún.</td></tr>`;
+
+                // En la primera carga, abrimos por defecto el turno actual
+                if (primerRenderTurnos && codigoActualGlobal) {
+                    turnosAbiertos.add(codigoActualGlobal);
+                    primerRenderTurnos = false;
                 }
+
+                contenedorTurnos.innerHTML = '';
+
+                if (ordenTurnos.length === 0) {
+                    contenedorTurnos.innerHTML = `<div class="text-center text-muted py-4">No hay turnos registrados aún.</div>`;
+                    return;
+                }
+
+                ordenTurnos.forEach(cod => {
+                    const grupo = gruposTurnos[cod];
+                    const abierto = turnosAbiertos.has(cod);
+                    const iconoTurno = cod.startsWith('NOCHE') ? 'fa-moon text-info' : 'fa-sun text-warning';
+                    const badgeActual = grupo.esActual ? `<span class="badge bg-success ms-2">EN CURSO</span>` : `<span class="badge bg-secondary ms-2">CERRADO</span>`;
+
+                    let filasHTML = '';
+                    if (grupo.rondas.length === 0) {
+                        filasHTML = `<tr><td colspan="4" class="text-center text-muted py-2">Sin rondas registradas en este turno todavía.</td></tr>`;
+                    } else {
+                        grupo.rondas.forEach(r => {
+                            const textoMostrar = r.instalacion ? `${r.instalacion} — ${r.asunto}` : r.asunto;
+                            filasHTML += `
+                                <tr>
+                                    <td><small class="text-muted">#${r.id}</small></td>
+                                    <td><span class="fw-semibold text-info">${r.usuario}</span></td>
+                                    <td><small class="text-warning">${r.fecha_envio || 'Registrado'}</small></td>
+                                    <td><small class="text-truncate d-inline-block" style="max-width: 340px;" title="${textoMostrar}">${textoMostrar}</small></td>
+                                </tr>
+                            `;
+                        });
+                    }
+
+                    const bloque = document.createElement('div');
+                    bloque.className = 'turno-item';
+                    bloque.innerHTML = `
+                        <div class="turno-header" onclick="toggleTurnoAcordeon('${cod}')">
+                            <div>
+                                <i class="fa-solid ${iconoTurno} me-2"></i>
+                                <span class="fw-bold text-light">${grupo.etiqueta}</span>
+                                ${badgeActual}
+                            </div>
+                            <div class="d-flex align-items-center gap-3">
+                                <span class="badge bg-primary">${grupo.rondas.length} rondas</span>
+                                <i id="icono-${cod}" class="fa-solid fa-chevron-down text-light chevron-turno ${abierto ? 'rotado' : ''}"></i>
+                            </div>
+                        </div>
+                        <div id="cuerpo-${cod}" class="turno-body ${abierto ? 'abierto' : ''}">
+                            <div class="table-responsive">
+                                <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Origen / Guardia</th>
+                                            <th>Hora de Envío</th>
+                                            <th>Detalles de la Ronda</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${filasHTML}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                    contenedorTurnos.appendChild(bloque);
+                });
+
             } catch (e) {
                 console.log("Error cargando historial", e);
             }
+        }
+
+        async function forzarVerificacion() {
+            const btn = document.getElementById('btn-sync');
+            const icono = document.getElementById('icono-sync');
+            btn.disabled = true;
+            icono.classList.add('fa-spin');
+
+            try {
+                const res = await fetch('/api/verificar-correo');
+                await res.json();
+                segundosParaSync = 15;
+                await cargarDatosEnVivo();
+                await cargarHistorial();
+            } catch (e) {
+                console.log("Error sincronizando:", e);
+            } finally {
+                btn.disabled = false;
+                icono.classList.remove('fa-spin');
+            }
+        }
+
+        async function cicloAutomatico() {
+            await cargarDatosEnVivo();
+            await cargarHistorial();
         }
 
         async function cambiarMeta(id, nuevaMeta) {
@@ -413,12 +574,8 @@
             cargarDatosEnVivo();
         }
 
-        cargarDatosEnVivo();
-        cargarHistorial();
-        setInterval(() => {
-            cargarDatosEnVivo();
-            cargarHistorial();
-        }, 15000);
+        // Carga inicial inmediata
+        forzarVerificacion();
 
         function activarPanicoRemoto() {
             const panel = document.getElementById('panel-emergencia');

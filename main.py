@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import imaplib
 import email
 from email.header import decode_header
@@ -25,6 +26,9 @@ app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+
+# Control de tiempo para sincronización automática sin saturar IMAP
+ultimo_chequeo_imap = 0
 
 class InstalacionDB(db.Model):
     __tablename__ = 'instalacion_db'
@@ -85,30 +89,38 @@ def decodificar_encabezado(valor):
     except Exception:
         return str(valor)
 
+def calcular_info_turno(dt_chile):
+    """
+    Recibe un datetime en hora de Chile y devuelve:
+    - codigo_turno (ej: 'NOCHE-2026-11-05')
+    - etiqueta_turno (ej: 'Día 05/11/2026 — Turno Nocturno (20:00 - 08:00)')
+    - inicio_turno_dt (datetime exacto de inicio de ese turno)
+    """
+    if dt_chile.hour >= 20:
+        inicio_turno = dt_chile.replace(hour=20, minute=0, second=0, microsecond=0)
+        fecha_codigo = inicio_turno.strftime('%Y-%m-%d')
+        fecha_visible = inicio_turno.strftime('%d/%m/%Y')
+        return f"NOCHE-{fecha_codigo}", f"Día {fecha_visible} — Turno Nocturno (20:00 - 08:00)", inicio_turno
+    elif dt_chile.hour < 8:
+        ayer = dt_chile - timedelta(days=1)
+        inicio_turno = ayer.replace(hour=20, minute=0, second=0, microsecond=0)
+        fecha_codigo = inicio_turno.strftime('%Y-%m-%d')
+        fecha_visible = inicio_turno.strftime('%d/%m/%Y')
+        return f"NOCHE-{fecha_codigo}", f"Día {fecha_visible} — Turno Nocturno (20:00 - 08:00)", inicio_turno
+    else:
+        inicio_turno = dt_chile.replace(hour=8, minute=0, second=0, microsecond=0)
+        fecha_codigo = inicio_turno.strftime('%Y-%m-%d')
+        fecha_visible = inicio_turno.strftime('%d/%m/%Y')
+        return f"DIA-{fecha_codigo}", f"Día {fecha_visible} — Turno Diurno (08:00 - 20:00)", inicio_turno
+
 def obtener_datos_turno_actual():
-    """
-    Devuelve el identificador del turno actual y la fecha/hora exacta (en zona horaria de Chile)
-    en que comenzó este turno (a las 08:00 o a las 20:00).
-    """
     chile_tz = pytz.timezone('America/Santiago')
     ahora = datetime.now(chile_tz)
-    
-    if ahora.hour >= 20:
-        inicio_turno = ahora.replace(hour=20, minute=0, second=0, microsecond=0)
-        codigo_turno = f"NOCHE-{inicio_turno.strftime('%Y-%m-%d')}"
-    elif ahora.hour < 8:
-        ayer = ahora - timedelta(days=1)
-        inicio_turno = ayer.replace(hour=20, minute=0, second=0, microsecond=0)
-        codigo_turno = f"NOCHE-{inicio_turno.strftime('%Y-%m-%d')}"
-    else:
-        inicio_turno = ahora.replace(hour=8, minute=0, second=0, microsecond=0)
-        codigo_turno = f"DIA-{inicio_turno.strftime('%Y-%m-%d')}"
-        
-    return codigo_turno, inicio_turno
+    return calcular_info_turno(ahora)
 
 def verificar_y_actualizar_turnos():
     try:
-        turno_actual, _ = obtener_datos_turno_actual()
+        turno_actual, _, _ = obtener_datos_turno_actual()
         instalaciones = InstalacionDB.query.all()
         cambio_turno = False
         for inst in instalaciones:
@@ -117,8 +129,7 @@ def verificar_y_actualizar_turnos():
                 inst.turno_activo = turno_actual
                 cambio_turno = True
         if cambio_turno:
-            # Al cambiar de turno (08:00 o 20:00), limpiamos el historial del turno anterior
-            ReporteKizeo.query.delete()
+            # IMPORTANTE: Ya NO borramos ReporteKizeo para conservar el historial de turnos anteriores
             db.session.commit()
     except Exception as e:
         db.session.rollback()
@@ -132,7 +143,32 @@ def buscar_instalacion_en_texto(instalaciones, texto_limpio):
             return inst
     return None
 
+def recalcular_contadores_turno_actual():
+    """
+    Asegura que la tabla de progreso muestre exactamente las rondas del turno activo en curso.
+    """
+    codigo_turno_actual, _, _ = obtener_datos_turno_actual()
+    instalaciones = InstalacionDB.query.all()
+    conteo = {inst.nombre: 0 for inst in instalaciones}
+
+    reportes = ReporteKizeo.query.all()
+    for r in reportes:
+        try:
+            det = json.loads(r.datos_json or '{}')
+            if det.get('turno_codigo') == codigo_turno_actual and det.get('tipo') == 'RONDA':
+                nom = det.get('instalacion')
+                if nom in conteo:
+                    conteo[nom] += 1
+        except Exception:
+            continue
+
+    for inst in instalaciones:
+        inst.rondas = conteo.get(inst.nombre, 0)
+        inst.turno_activo = codigo_turno_actual
+    db.session.commit()
+
 def verificar_correos_kizeo(forzar_reconteo=False):
+    global ultimo_chequeo_imap
     procesados = 0
     mail = None
     try:
@@ -143,7 +179,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         if not mail_user or not mail_password:
             return False, "Faltan variables MAIL_USER o MAIL_PASSWORD en Render", 0
 
-        # 1. Descarga en lote de los últimos encabezados (< 0.5 seg)
+        ultimo_chequeo_imap = time.time()
+
         mail = imaplib.IMAP4_SSL(mail_server, timeout=8)
         mail.login(mail_user, mail_password)
         status, messages = mail.select('INBOX', readonly=True)
@@ -157,7 +194,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
             mail.logout()
             return True, "Bandeja vacía", 0
 
-        inicio = max(1, total_correos - 29)
+        # Descargamos los últimos 40 encabezados en un solo lote rápido para cubrir turnos recientes
+        inicio = max(1, total_correos - 39)
         rango_lote = f"{inicio}:{total_correos}"
 
         status, data = mail.fetch(rango_lote, '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM MESSAGE-ID DATE)])')
@@ -170,15 +208,14 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         if status != 'OK' or not data:
             return False, "No se pudieron obtener encabezados", 0
 
-        # 2. Obtener la hora exacta de inicio del turno actual (ej: hoy 20:00:00 Chile)
         chile_tz = pytz.timezone('America/Santiago')
-        codigo_turno, inicio_turno_dt = obtener_datos_turno_actual()
+        codigo_turno_actual, _, _ = obtener_datos_turno_actual()
 
         if forzar_reconteo:
             ReporteKizeo.query.delete()
             for inst in InstalacionDB.query.all():
                 inst.rondas = 0
-                inst.turno_activo = codigo_turno
+                inst.turno_activo = codigo_turno_actual
             db.session.commit()
 
         instalaciones = InstalacionDB.query.all()
@@ -201,7 +238,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 if not asunto or not date_hdr:
                     continue
 
-                # Convertir la fecha del correo a hora oficial de Chile
                 try:
                     dt_correo = parsedate_to_datetime(date_hdr)
                     if dt_correo.tzinfo is None:
@@ -210,11 +246,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 except Exception:
                     continue
 
-                # FILTRO ESTRICTO DE TURNO:
-                # Si el correo llegó ANTES del inicio del turno actual (ej: antes de las 20:00), lo ignoramos
-                if dt_correo_chile < inicio_turno_dt:
-                    continue
-
+                # Calcular a qué turno exacto pertenece este correo según su fecha y hora
+                turno_cod_correo, turno_label_correo, _ = calcular_info_turno(dt_correo_chile)
                 fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
                 nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
@@ -222,7 +255,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 remitente_limpio = limpiar_texto(nombre_remitente)
                 texto_busqueda = f"{asunto_limpio} {remitente_limpio}"
 
-                # Ignorar correos ajenos a Kizeo
                 if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
                     continue
 
@@ -230,7 +262,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 if uid_unico in ids_existentes:
                     continue
 
-                # A) ¿Es ALERTA o NOVEDAD dentro del turno actual? -> Va a Novedades, NO suma ronda
+                # A) ¿Es ALERTA o NOVEDAD?
                 if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
@@ -242,18 +274,23 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                         datos_json=json.dumps({
                             "tipo": "NOVEDAD",
                             "instalacion": nombre_inst,
-                            "asunto": asunto
+                            "asunto": asunto,
+                            "turno_codigo": turno_cod_correo,
+                            "turno_etiqueta": turno_label_correo
                         }, ensure_ascii=False)
                     )
                     db.session.add(nuevo_rep)
                     ids_existentes.add(uid_unico)
                     procesados += 1
 
-                # B) ¿Es RONDA dentro del turno actual? -> Suma +1 a la instalación correspondiente
+                # B) ¿Es RONDA?
                 elif "ronda" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     if inst_obj:
-                        inst_obj.rondas += 1
+                        # Solo sumamos al contador en vivo si el correo pertenece al turno actual en curso
+                        if turno_cod_correo == codigo_turno_actual:
+                            inst_obj.rondas += 1
+
                         nuevo_rep = ReporteKizeo(
                             form_id=uid_unico,
                             usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
@@ -261,7 +298,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             datos_json=json.dumps({
                                 "tipo": "RONDA",
                                 "instalacion": inst_obj.nombre,
-                                "asunto": asunto
+                                "asunto": asunto,
+                                "turno_codigo": turno_cod_correo,
+                                "turno_etiqueta": turno_label_correo
                             }, ensure_ascii=False)
                         )
                         db.session.add(nuevo_rep)
@@ -269,7 +308,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                         procesados += 1
 
         db.session.commit()
-        return True, f"Sincronizado turno actual (desde {inicio_turno_dt.strftime('%H:%M')} hrs)", procesados
+        recalcular_contadores_turno_actual()
+        return True, f"Sincronizado correctamente ({codigo_turno_actual})", procesados
 
     except Exception as e:
         db.session.rollback()
@@ -286,9 +326,17 @@ def home():
 
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
+    global ultimo_chequeo_imap
     try:
         verificar_y_actualizar_turnos()
+
+        # SINCRONIZACIÓN AUTOMÁTICA SILENCIOSA CADA 30 SEGUNDOS
+        ahora_ts = time.time()
+        if (ahora_ts - ultimo_chequeo_imap) >= 30:
+            verificar_correos_kizeo(forzar_reconteo=False)
+
         instalaciones = InstalacionDB.query.order_by(InstalacionDB.id.asc()).all()
+        _, etiqueta_turno_actual, _ = obtener_datos_turno_actual()
         resultado = [{
             "id": i.id,
             "nombre": i.nombre,
@@ -297,7 +345,8 @@ def obtener_estado_instalaciones():
             "lng": i.lng,
             "rondas": i.rondas,
             "meta_rondas": i.meta_rondas,
-            "turno": i.turno_activo
+            "turno": i.turno_activo,
+            "turno_etiqueta": etiqueta_turno_actual
         } for i in instalaciones]
         return jsonify(resultado), 200
     except Exception as e:
@@ -305,7 +354,9 @@ def obtener_estado_instalaciones():
 
 @app.route('/api/verificar-correo', methods=['GET'])
 def disparar_verificacion_correo():
-    ok, msg, procesados = verificar_correos_kizeo(forzar_reconteo=True)
+    # Botón manual: sincroniza de inmediato sin esperar los 30s
+    forzar = request.args.get('reconteo') == '1'
+    ok, msg, procesados = verificar_correos_kizeo(forzar_reconteo=forzar)
     return jsonify({
         "status": "success" if ok else "error",
         "message": msg,
@@ -315,13 +366,16 @@ def disparar_verificacion_correo():
 @app.route('/api/historial-rondas', methods=['GET'])
 def obtener_historial():
     try:
-        reportes = ReporteKizeo.query.order_by(ReporteKizeo.id.desc()).limit(60).all()
+        codigo_actual, etiqueta_actual, _ = obtener_datos_turno_actual()
+        reportes = ReporteKizeo.query.order_by(ReporteKizeo.id.desc()).limit(200).all()
         historial = [{
             "id": r.id,
             "form_id": r.form_id,
             "usuario": r.usuario,
             "fecha_envio": r.fecha_envio,
-            "detalles": r.datos_json
+            "detalles": r.datos_json,
+            "turno_actual_codigo": codigo_actual,
+            "turno_actual_etiqueta": etiqueta_actual
         } for r in reportes]
         return jsonify(historial), 200
     except Exception as e:
@@ -367,7 +421,9 @@ def recibir_webhook():
         usuario = content.get('user', {}).get('login', 'Guardia Kizeo')
         
         chile_tz = pytz.timezone('America/Santiago')
-        fecha = datetime.now(chile_tz).strftime('%d/%m/%Y %H:%M:%S')
+        ahora_chile = datetime.now(chile_tz)
+        fecha = ahora_chile.strftime('%d/%m/%Y %H:%M:%S')
+        turno_cod, turno_label, _ = calcular_info_turno(ahora_chile)
         
         form_name = content.get('form_name', '')
         texto_webhook = limpiar_texto(f"{form_name} {json.dumps(content)}")
@@ -385,7 +441,13 @@ def recibir_webhook():
                     form_id=form_id,
                     usuario=f"⚠️ ALERTA ({nombre_inst})",
                     fecha_envio=str(fecha),
-                    datos_json=json.dumps({"tipo": "NOVEDAD", "instalacion": nombre_inst, "asunto": form_name}, ensure_ascii=False)
+                    datos_json=json.dumps({
+                        "tipo": "NOVEDAD",
+                        "instalacion": nombre_inst,
+                        "asunto": form_name,
+                        "turno_codigo": turno_cod,
+                        "turno_etiqueta": turno_label
+                    }, ensure_ascii=False)
                 )
                 db.session.add(nuevo_reporte)
                 db.session.commit()
@@ -397,7 +459,13 @@ def recibir_webhook():
                     form_id=form_id,
                     usuario=str(usuario),
                     fecha_envio=str(fecha),
-                    datos_json=json.dumps({"tipo": "RONDA", "instalacion": nombre_inst, "asunto": form_name}, ensure_ascii=False)
+                    datos_json=json.dumps({
+                        "tipo": "RONDA",
+                        "instalacion": nombre_inst,
+                        "asunto": form_name,
+                        "turno_codigo": turno_cod,
+                        "turno_etiqueta": turno_label
+                    }, ensure_ascii=False)
                 )
                 db.session.add(nuevo_reporte)
                 db.session.commit()
