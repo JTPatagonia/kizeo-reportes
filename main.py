@@ -404,9 +404,16 @@ def obtener_auditoria_sesiones():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/crear-operador', methods=['POST'])
+@app.route('/api/crear-operador', methods=['POST'])
 def crear_operador():
     if 'operador_id' not in session:
         return jsonify({"error": "No autorizado"}), 401
+    
+    # Validar estrictamente que solo el usuario 'admin' pueda crear operadores
+    operador_actual = Operador.query.get(session.get('operador_id'))
+    if not operador_actual or operador_actual.username != 'admin':
+        return jsonify({"error": "Acceso denegado. Solo el administrador puede registrar nuevos operadores."}), 403
+
     try:
         data = request.json
         username = data.get('username', '').strip()
@@ -436,7 +443,9 @@ def crear_operador():
 def home():
     if 'operador_id' not in session:
         return redirect(url_for('login'))
-    return render_template('index.html', operador=session.get('nombre_operador'))
+    operador_actual = Operador.query.get(session.get('operador_id'))
+    es_admin = operador_actual.username == 'admin' if operador_actual else False
+    return render_template('index.html', operador=session.get('nombre_operador'), es_admin=es_admin)
 
 @app.route('/api/estado-instalaciones', methods=['GET'])
 def obtener_estado_instalaciones():
