@@ -9,7 +9,7 @@ import re
 import unicodedata
 from datetime import datetime, timedelta
 import pytz
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, send_from_directory
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import db, ReporteKizeo
@@ -17,6 +17,10 @@ from database import db, ReporteKizeo
 app = Flask(__name__)
 CORS(app)
 app.secret_key = os.getenv('SECRET_KEY', 'central_monitoreo_secreto_2026')
+
+# Carpeta para almacenar los PDFs extraídos de los correos
+PDF_FOLDER = os.path.join(os.getcwd(), 'static', 'pdf_adjuntos')
+os.makedirs(PDF_FOLDER, exist_ok=True)
 
 database_url = os.getenv('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
@@ -214,7 +218,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         inicio = max(1, total_correos - 39)
         rango_lote = f"{inicio}:{total_correos}"
 
-        # Descargar mensaje completo para extraer cuerpo y adjuntos
         status, data = mail.fetch(rango_lote, '(RFC822)')
         
         try:
@@ -266,10 +269,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 turno_cod_correo, turno_label_correo, _ = calcular_info_turno(dt_correo_chile)
                 fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
-                # Extraer cuerpo del correo y adjuntos PDF
                 cuerpo_texto = ""
                 tiene_pdf = False
-                nombre_pdf = ""
+                nombre_pdf_guardado = ""
 
                 if msg.is_multipart():
                     for part_m in msg.walk():
@@ -282,7 +284,15 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                                 filename = decodificar_encabezado(filename)
                                 if ".pdf" in filename.lower():
                                     tiene_pdf = True
-                                    nombre_pdf = filename
+                                    # Guardar el PDF físicamente en el servidor
+                                    safe_filename = f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]', '_', filename)}"
+                                    pdf_path = os.path.join(PDF_FOLDER, safe_filename)
+                                    try:
+                                        with open(pdf_path, "wb") as f_pdf:
+                                            f_pdf.write(part_m.get_payload(decode=True))
+                                        nombre_pdf_guardado = safe_filename
+                                    except Exception:
+                                        tiene_pdf = False
 
                         if content_type == "text/plain" and not cuerpo_texto:
                             try:
@@ -326,9 +336,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             "tipo": "NOVEDAD",
                             "instalacion": nombre_inst,
                             "asunto": asunto,
-                            "cuerpo": cuerpo_texto[:2500], # Guardar texto del correo
+                            "cuerpo": cuerpo_texto[:2500],
                             "tiene_pdf": tiene_pdf,
-                            "nombre_pdf": nombre_pdf,
+                            "nombre_pdf": nombre_pdf_guardado,
                             "remitente": nombre_remitente,
                             "turno_codigo": turno_cod_correo,
                             "turno_etiqueta": turno_label_correo
@@ -354,7 +364,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                                 "asunto": asunto,
                                 "cuerpo": cuerpo_texto[:2500],
                                 "tiene_pdf": tiene_pdf,
-                                "nombre_pdf": nombre_pdf,
+                                "nombre_pdf": nombre_pdf_guardado,
                                 "remitente": nombre_remitente,
                                 "turno_codigo": turno_cod_correo,
                                 "turno_etiqueta": turno_label_correo
@@ -551,7 +561,7 @@ def obtener_historial():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Ruta para ver el detalle completo de un reporte al hacer clic
+# Ruta para ver el detalle y visualizar el PDF adjunto
 @app.route('/api/detalle-reporte/<int:reporte_id>', methods=['GET'])
 def obtener_detalle_reporte(reporte_id):
     if 'operador_id' not in session:
@@ -571,11 +581,18 @@ def obtener_detalle_reporte(reporte_id):
             "remitente": detalles.get('remitente', 'Desconocido'),
             "instalacion": detalles.get('instalacion', 'General'),
             "tiene_pdf": detalles.get('tiene_pdf', False),
-            "nombre_pdf": detalles.get('nombre_pdf', 'Reporte.pdf'),
+            "url_pdf": f"/ver-pdf/{detalles.get('nombre_pdf')}" if detalles.get('tiene_pdf') else "",
             "tipo": detalles.get('tipo', 'INFORME')
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# Ruta para servir el archivo PDF adjunto
+@app.route('/ver-pdf/<path:filename>')
+def ver_pdf(filename):
+    if 'operador_id' not in session:
+        return redirect(url_for('login'))
+    return send_from_directory(PDF_FOLDER, filename)
 
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():

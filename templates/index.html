@@ -230,33 +230,37 @@
         </div>
     </div>
 
-    <!-- MODAL VISOR DE CORREO Y PDF -->
+    <!-- MODAL VISOR DE CORREO Y PDF INTEGRADO -->
     <div class="modal fade" id="modalDetalleCorreo" tabindex="-1">
-        <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-dialog modal-xl modal-dialog-centered">
             <div class="modal-content bg-dark text-light border border-secondary shadow-lg">
                 <div class="modal-header border-secondary bg-black">
-                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-envelope-open-text me-2"></i> Detalle del Reporte y Correo</h5>
+                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-file-pdf text-danger me-2"></i> Visor de Reporte y PDF Adjunto</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body" style="background-color: #181818;">
-                    <div class="mb-3 p-3 bg-black rounded border border-secondary">
-                        <div class="small text-warning mb-1"><strong class="text-light">Remitente:</strong> <span id="correo-remitente">-</span></div>
-                        <div class="small text-warning mb-1"><strong class="text-light">Fecha y Hora:</strong> <span id="correo-fecha">-</span></div>
-                        <div class="small text-warning"><strong class="text-light">Asunto:</strong> <span id="correo-asunto" class="fw-bold text-light">-</span></div>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label small text-secondary fw-semibold">Contenido del Correo / Reporte:</label>
-                        <div id="correo-cuerpo" class="p-3 rounded border border-secondary bg-dark text-light" style="max-height: 250px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 13px;">Cargando...</div>
-                    </div>
-                    <div id="contenedor-pdf-adjunto" class="d-none alert alert-secondary py-2 d-flex justify-content-between align-items-center">
-                        <div>
-                            <i class="fa-solid fa-file-pdf text-danger fa-lg me-2"></i>
-                            <span id="nombre-archivo-pdf" class="fw-bold small text-light">documento.pdf</span>
+                    <div class="row g-3">
+                        <div class="col-lg-4">
+                            <div class="p-3 bg-black rounded border border-secondary mb-3">
+                                <div class="small text-warning mb-1"><strong class="text-light">Remitente:</strong> <span id="correo-remitente">-</span></div>
+                                <div class="small text-warning mb-1"><strong class="text-light">Fecha:</strong> <span id="correo-fecha">-</span></div>
+                                <div class="small text-warning"><strong class="text-light">Asunto:</strong> <span id="correo-asunto" class="fw-bold text-light">-</span></div>
+                            </div>
+                            <label class="form-label small text-secondary fw-semibold">Resumen del Mensaje:</label>
+                            <div id="correo-cuerpo" class="p-3 rounded border border-secondary bg-dark text-light" style="max-height: 350px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px;">Cargando...</div>
                         </div>
-                        <span class="badge bg-danger small">Archivo adjunto en el correo original</span>
+                        <div class="col-lg-8">
+                            <label class="form-label small text-secondary fw-semibold"><i class="fa-solid fa-eye text-info me-1"></i> Documento PDF Adjunto:</label>
+                            <div id="contenedor-visor-pdf" class="border border-secondary rounded bg-black" style="height: 500px; display: flex; align-items: center; justify-content: center;">
+                                <span class="text-muted small">Cargando visor PDF...</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer border-secondary bg-black">
+                    <a id="btn-descargar-pdf" href="#" target="_blank" class="btn btn-outline-danger btn-sm fw-bold d-none">
+                        <i class="fa-solid fa-download me-1"></i> Abrir PDF en Pantalla Completa
+                    </a>
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
                 </div>
             </div>
@@ -326,38 +330,28 @@
         const API_URL = "/api/estado-instalaciones";
         const HISTORIAL_URL = "/api/historial-rondas";
 
-        // Sirena de emergencia de 5 segundos con onda sawtooth
         function reproducirSonidoAlerta() {
             try {
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 let osc = audioCtx.createOscillator();
                 let gain = audioCtx.createGain();
-                
-                osc.type = 'sawtooth';
-                osc.connect(gain);
-                gain.connect(audioCtx.destination);
-                
+                osc.type = 'sawtooth'; osc.connect(gain); gain.connect(audioCtx.destination);
                 let time = audioCtx.currentTime;
                 let duracionTotal = 5.0; 
                 let ciclos = 5;
                 let paso = duracionTotal / (ciclos * 2);
-                
                 for (let i = 0; i < ciclos; i++) {
                     let tInicio = time + (i * paso * 2);
                     let tMitad = tInicio + paso;
                     let tFin = tInicio + (paso * 2);
-                    
                     osc.frequency.setValueAtTime(450, tInicio);
                     osc.frequency.linearRampToValueAtTime(1100, tMitad);
                     osc.frequency.linearRampToValueAtTime(450, tFin);
                 }
-
                 gain.gain.setValueAtTime(0.35, time);
                 gain.gain.setValueAtTime(0.35, time + duracionTotal - 0.2);
                 gain.gain.linearRampToValueAtTime(0.001, time + duracionTotal);
-
-                osc.start(time);
-                osc.stop(time + duracionTotal);
+                osc.start(time); osc.stop(time + duracionTotal);
             } catch(e) {}
         }
 
@@ -407,7 +401,7 @@
             });
         }
 
-        // Función para abrir el detalle completo del correo al hacer clic en una fila
+        // Cargar y mostrar el PDF directamente en el visor de la ventana modal
         async function verDetalleReporte(reporteId) {
             const modal = new bootstrap.Modal(document.getElementById('modalDetalleCorreo'));
             modal.show();
@@ -415,8 +409,9 @@
             document.getElementById('correo-remitente').innerText = "Cargando...";
             document.getElementById('correo-fecha').innerText = "Cargando...";
             document.getElementById('correo-asunto').innerText = "Cargando...";
-            document.getElementById('correo-cuerpo').innerText = "Obteniendo contenido del servidor...";
-            document.getElementById('contenedor-pdf-adjunto').classList.add('d-none');
+            document.getElementById('correo-cuerpo').innerText = "Obteniendo datos...";
+            document.getElementById('contenedor-visor-pdf').innerHTML = `<span class="text-muted small">Cargando PDF...</span>`;
+            document.getElementById('btn-descargar-pdf').classList.add('d-none');
 
             try {
                 const res = await fetch(`/api/detalle-reporte/${reporteId}`);
@@ -427,12 +422,23 @@
                     document.getElementById('correo-asunto').innerText = data.asunto;
                     document.getElementById('correo-cuerpo').innerText = data.cuerpo;
 
-                    if (data.tiene_pdf) {
-                        document.getElementById('nombre-archivo-pdf').innerText = data.nombre_pdf;
-                        document.getElementById('contenedor-pdf-adjunto').classList.remove('d-none');
+                    if (data.tiene_pdf && data.url_pdf) {
+                        document.getElementById('contenedor-visor-pdf').innerHTML = `
+                            <embed src="${data.url_pdf}" type="application/pdf" width="100%" height="100%" />
+                        `;
+                        const btnDescargar = document.getElementById('btn-descargar-pdf');
+                        btnDescargar.href = data.url_pdf;
+                        btnDescargar.classList.remove('d-none');
+                    } else {
+                        document.getElementById('contenedor-visor-pdf').innerHTML = `
+                            <div class="text-center text-muted p-4">
+                                <i class="fa-solid fa-triangle-exclamation fa-2x mb-2 text-warning"></i>
+                                <p class="small m-0">Este reporte no contiene ningún archivo PDF adjunto en el correo.</p>
+                            </div>
+                        `;
                     }
                 } else {
-                    document.getElementById('correo-cuerpo').innerText = "Error al cargar el detalle del reporte.";
+                    document.getElementById('correo-cuerpo').innerText = "Error al cargar el reporte.";
                 }
             } catch (e) {
                 document.getElementById('correo-cuerpo').innerText = "Error de conexión con el servidor.";
@@ -640,7 +646,7 @@
                     primerRenderTurnos = false;
                 }
 
-                // Render Novedades (con evento onclick para abrir el correo completo)
+                // Render Novedades
                 if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
                     contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
                 } else {
@@ -658,9 +664,9 @@
                             const ab = instNovAbiertas.has(clave);
                             let filas = '';
                             lista.forEach(n => { 
-                                filas += `<tr onclick="verDetalleReporte(${n.id})" title="Haz clic para ver el correo y PDF completo" style="cursor: pointer;">
+                                filas += `<tr onclick="verDetalleReporte(${n.id})" title="Haz clic para abrir el PDF y detalle" style="cursor: pointer;">
                                     <td><small class="text-warning">${n.fecha_envio}</small></td>
-                                    <td><small class="text-light fw-bold"><i class="fa-solid fa-envelope me-1 text-info"></i> ${n.asunto}</small></td>
+                                    <td><small class="text-light fw-bold"><i class="fa-solid fa-file-pdf text-danger me-1"></i> ${n.asunto}</small></td>
                                 </tr>`; 
                             });
                             subHTML += `
@@ -686,7 +692,7 @@
                     });
                 }
 
-                // Render Rondas (con evento onclick para abrir el detalle)
+                // Render Rondas
                 ordenTurnos.forEach(cod => {
                     const g = gruposTurnos[cod];
                     const abierto = turnosAbiertos.has(cod);
@@ -700,7 +706,7 @@
                         const ab = instalacionesAbiertas.has(clave);
                         let filas = '';
                         lista.forEach((r, idx) => {
-                            filas += `<tr onclick="verDetalleReporte(${r.id})" title="Haz clic para ver el detalle" style="cursor: pointer;">
+                            filas += `<tr onclick="verDetalleReporte(${r.id})" title="Haz clic para ver el detalle y PDF" style="cursor: pointer;">
                                 <td><span class="badge bg-dark border text-secondary">Ronda #${lista.length - idx}</span></td>
                                 <td><small class="text-info">${r.usuario}</small></td>
                                 <td><small class="text-warning">${r.fecha_envio}</small></td>
