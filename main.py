@@ -270,7 +270,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 pdf_base64 = ""
                 nombre_pdf = ""
 
-                # Recorrido exhaustivo para encontrar cualquier PDF adjunto en el correo
                 for part_m in msg.walk():
                     content_type = part_m.get_content_type()
                     content_disposition = str(part_m.get("Content-Disposition", ""))
@@ -279,12 +278,19 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     if filename:
                         filename = decodificar_encabezado(filename)
 
-                    if (content_type == "application/pdf") or (filename and ".pdf" in filename.lower()) or ("attachment" in content_disposition and filename and ".pdf" in filename.lower()):
+                    es_pdf = (
+                        content_type == "application/pdf" or 
+                        (filename and ".pdf" in filename.lower()) or 
+                        ("name=" in str(part_m.get_content_type())) or
+                        (content_type == "application/octet-stream" and filename and ".pdf" in filename.lower())
+                    )
+
+                    if es_pdf or (filename and filename.endswith('.pdf')):
                         try:
                             pdf_bytes = part_m.get_payload(decode=True)
                             if pdf_bytes:
                                 pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
-                                nombre_pdf = filename or "reporte.pdf"
+                                nombre_pdf = filename or "reporte_kizeo.pdf"
                         except Exception:
                             pass
 
