@@ -114,10 +114,6 @@ def verificar_y_actualizar_turnos():
         print(f"Error en turnos: {e}")
 
 def buscar_instalacion_en_texto(instalaciones, texto_limpio):
-    """
-    Busca a qué instalación corresponde el texto limpio del correo (Asunto + Remitente).
-    Ej: 'RONDA - ICESTAR PUDAHUEL' -> busca que estén 'icestar' y 'pudahuel'.
-    """
     for inst in instalaciones:
         nombre_sin_prefijo = inst.nombre.replace("RONDA - ", "").replace("RONDA", "").strip()
         palabras_clave = [p for p in limpiar_texto(nombre_sin_prefijo).split() if len(p) > 2]
@@ -136,22 +132,13 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         if not mail_user or not mail_password:
             return False, "Faltan variables MAIL_USER o MAIL_PASSWORD en Render", 0
 
-        # Si se presiona el botón manual de sincronizar, limpiamos el bloqueo de correos previos
-        # y recalculamos limpio el contador de los correos actuales en la bandeja
-        if forzar_reconteo:
-            try:
-                ReporteKizeo.query.delete()
-                for inst in InstalacionDB.query.all():
-                    inst.rondas = 0
-                db.session.commit()
-            except Exception:
-                db.session.rollback()
-
-        mail = imaplib.IMAP4_SSL(mail_server, timeout=10)
+        # 1. Conectar y descargar TODOS los encabezados en UN SOLO VIAJE (tarda < 0.5 seg)
+        mail = imaplib.IMAP4_SSL(mail_server, timeout=8)
         mail.login(mail_user, mail_password)
         status, messages = mail.select('INBOX', readonly=True)
         
         if status != 'OK':
+            mail.logout()
             return False, "No se pudo abrir INBOX", 0
 
         total_correos = int(messages[0])
@@ -159,61 +146,67 @@ def verificar_correos_kizeo(forzar_reconteo=False):
             mail.logout()
             return True, "Bandeja vacía", 0
 
-        # Leemos los últimos 20 correos de la bandeja (en tu Gmail tienes 15 correos en total)
-        inicio = max(1, total_correos - 19)
-        rango_ids = [str(i).encode() for i in range(inicio, total_correos + 1)]
+        inicio = max(1, total_correos - 24)
+        rango_lote = f"{inicio}:{total_correos}"
+
+        # PETICIÓN ÚNICA EN LOTE (No hay bucle de red, descarga los 25 encabezados de golpe)
+        status, data = mail.fetch(rango_lote, '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM MESSAGE-ID DATE)])')
+        
+        try:
+            mail.logout()
+        except Exception:
+            pass
+
+        if status != 'OK' or not data:
+            return False, "No se pudieron obtener encabezados", 0
+
+        # 2. Ya con los correos en memoria, procesamos rápido en la base de datos
+        if forzar_reconteo:
+            ReporteKizeo.query.delete()
+            for inst in InstalacionDB.query.all():
+                inst.rondas = 0
+            db.session.commit()
 
         instalaciones = InstalacionDB.query.all()
+        ids_existentes = set(r.form_id for r in ReporteKizeo.query.all() if r.form_id)
         chile_tz = pytz.timezone('America/Santiago')
         ahora_str = datetime.now(chile_tz).strftime('%Y-%m-%d %H:%M:%S')
 
-        for num in rango_ids:
-            try:
-                # Pedimos todo el encabezado del correo (sin el cuerpo ni los PDFs, solo headers)
-                status, data = mail.fetch(num, '(BODY.PEEK[HEADER])')
-                if status != 'OK' or not data:
+        idx = 0
+        for part in data:
+            if isinstance(part, tuple) and len(part) >= 2:
+                idx += 1
+                raw_header = part[1]
+                if not raw_header:
                     continue
 
-                asunto = ""
-                remitente = ""
-                msg_id = ""
-                fecha_correo = ahora_str
-
-                for part in data:
-                    if isinstance(part, tuple):
-                        msg_hdr = email.message_from_bytes(part[1])
-                        asunto = decodificar_encabezado(msg_hdr.get('Subject', ''))
-                        remitente = decodificar_encabezado(msg_hdr.get('From', ''))
-                        msg_id = (msg_hdr.get('Message-ID') or '').strip()
-                        date_hdr = decodificar_encabezado(msg_hdr.get('Date', ''))
-                        if date_hdr:
-                            fecha_correo = date_hdr[:25]
+                msg_hdr = email.message_from_bytes(raw_header)
+                asunto = decodificar_encabezado(msg_hdr.get('Subject', ''))
+                remitente = decodificar_encabezado(msg_hdr.get('From', ''))
+                msg_id = (msg_hdr.get('Message-ID') or '').strip()
+                date_hdr = decodificar_encabezado(msg_hdr.get('Date', ''))
+                fecha_correo = date_hdr[:25] if date_hdr else ahora_str
 
                 if not asunto:
                     continue
 
-                # Quitar la dirección de correo entre <...> del remitente para que "kizeorondas..." no ensucie la búsqueda
                 nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
-
                 asunto_limpio = limpiar_texto(asunto)
                 remitente_limpio = limpiar_texto(nombre_remitente)
                 texto_busqueda = f"{asunto_limpio} {remitente_limpio}"
 
-                # Ignorar correos de Google, Render o seguridad
+                # Ignorar correos ajenos a Kizeo
                 if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
                     continue
 
-                # ID único por correo en la bandeja
-                uid_unico = msg_id if msg_id else f"correo-num-{num.decode()}-{asunto_limpio[:20]}"
-
-                # Si ya fue contado, no duplicarlo
-                if ReporteKizeo.query.filter_by(form_id=uid_unico).first():
+                uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}"
+                if uid_unico in ids_existentes:
                     continue
 
-                # 1. ¿TIENE LA PALABRA "ALERTA" O "NOVEDAD"? -> Va al plano aparte (Novedades), NO suma ronda
+                # A) ¿Es ALERTA o NOVEDAD? -> Va a la tabla roja de Novedades, NO suma ronda
                 if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
-                    nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else nombre_remitente
+                    nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
 
                     nuevo_rep = ReporteKizeo(
                         form_id=uid_unico,
@@ -226,18 +219,17 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                         }, ensure_ascii=False)
                     )
                     db.session.add(nuevo_rep)
-                    db.session.commit()
+                    ids_existentes.add(uid_unico)
                     procesados += 1
 
-                # 2. ¿TIENE LA PALABRA "RONDA"? -> Busca el nombre de la instalación y SUMA +1 a la ronda
+                # B) ¿Es RONDA? -> Busca instalación y suma +1
                 elif "ronda" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     if inst_obj:
                         inst_obj.rondas += 1
-                        
                         nuevo_rep = ReporteKizeo(
                             form_id=uid_unico,
-                            usuario=f"Ronda / {inst_obj.nombre.replace('RONDA - ', '')}",
+                            usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
                             fecha_envio=fecha_correo,
                             datos_json=json.dumps({
                                 "tipo": "RONDA",
@@ -246,21 +238,15 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             }, ensure_ascii=False)
                         )
                         db.session.add(nuevo_rep)
-                        db.session.commit()
+                        ids_existentes.add(uid_unico)
                         procesados += 1
 
-            except Exception as e_inner:
-                db.session.rollback()
-                continue
-
-        try:
-            mail.logout()
-        except Exception:
-            pass
-
-        return True, "Correos leídos y sumados a las rondas", procesados
+        # Un único commit a PostgreSQL al terminar el lote
+        db.session.commit()
+        return True, "Sincronización instantánea completada", procesados
 
     except Exception as e:
+        db.session.rollback()
         if mail:
             try:
                 mail.logout()
@@ -276,10 +262,6 @@ def home():
 def obtener_estado_instalaciones():
     try:
         verificar_y_actualizar_turnos()
-        # Si todavía no hay reportes cargados, lee automáticamente el correo al abrir la página
-        if ReporteKizeo.query.count() == 0:
-            verificar_correos_kizeo(forzar_reconteo=False)
-
         instalaciones = InstalacionDB.query.order_by(InstalacionDB.id.asc()).all()
         resultado = [{
             "id": i.id,
@@ -297,7 +279,6 @@ def obtener_estado_instalaciones():
 
 @app.route('/api/verificar-correo', methods=['GET'])
 def disparar_verificacion_correo():
-    # Al presionar el botón "Sincronizar Correos", fuerza el reconteo completo de tu bandeja
     ok, msg, procesados = verificar_correos_kizeo(forzar_reconteo=True)
     return jsonify({
         "status": "success" if ok else "error",
