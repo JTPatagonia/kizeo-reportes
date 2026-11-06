@@ -14,10 +14,8 @@
         .card-custom { background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; }
         .card-novedades { background-color: #1e1e1e; border: 1px solid #dc3545; border-radius: 8px; }
         
-        /* Estilo normal del mapa */
         #map { height: 60vh; border-radius: 8px; border: 1px solid #444; z-index: 1; transition: height 0.25s ease; }
 
-        /* Modo Pantalla Completa con Bordes */
         .mapa-fullscreen-overlay {
             position: fixed !important;
             top: 2.5vh !important;
@@ -48,7 +46,6 @@
             100% { transform: scale(1); filter: drop-shadow(0 0 4px rgba(220, 53, 69, 0.9)); }
         }
 
-        /* Iconos del mapa grandes */
         .marker-triangulo {
             color: white;
             width: 38px;
@@ -72,7 +69,7 @@
         .table-dark-custom { background-color: #1e1e1e; color: #e0e0e0; }
         .table-dark-custom th, .table-dark-custom td { border-color: #333; }
 
-        /* Estilos para las carpetas desplegables de Turnos */
+        /* Estilos para carpetas de Turnos y sub-carpetas por Instalación */
         .turno-item {
             background-color: #181818;
             border: 1px solid #343a40;
@@ -90,26 +87,17 @@
             transition: background-color 0.2s ease;
             user-select: none;
         }
-        .turno-header:hover {
-            background-color: #2c3136;
-        }
+        .turno-header:hover { background-color: #2c3136; }
         .turno-body {
             display: none;
             padding: 10px;
             background-color: #141619;
             border-top: 1px solid #333;
         }
-        .turno-body.abierto {
-            display: block;
-        }
-        .chevron-turno {
-            transition: transform 0.2s ease;
-        }
-        .chevron-turno.rotado {
-            transform: rotate(180deg);
-        }
+        .turno-body.abierto { display: block; }
+        .chevron-turno { transition: transform 0.2s ease; }
+        .chevron-turno.rotado { transform: rotate(180deg); }
 
-        /* Estilos para las sub-carpetas por Instalación dentro de cada Turno */
         .inst-grupo-item {
             background-color: #1b1e22;
             border: 1px solid #2f353b;
@@ -128,18 +116,42 @@
             transition: background-color 0.15s ease;
             user-select: none;
         }
-        .inst-grupo-header:hover {
-            background-color: #282d33;
-        }
+        .inst-grupo-header:hover { background-color: #282d33; }
         .inst-grupo-body {
             display: none;
             padding: 6px 10px;
             background-color: #15171a;
             border-top: 1px solid #2a2e33;
         }
-        .inst-grupo-body.abierto {
-            display: block;
+        .inst-grupo-body.abierto { display: block; }
+
+        /* Estilos específicos para Novedades agrupadas por Turno / Instalación */
+        .nov-grupo-item {
+            background-color: #22181a;
+            border: 1px solid #482328;
+            border-left: 3px solid #dc3545;
+            border-radius: 5px;
+            margin-bottom: 6px;
+            overflow: hidden;
         }
+        .nov-grupo-header {
+            padding: 7px 12px;
+            background-color: #2a1b1e;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color 0.15s ease;
+            user-select: none;
+        }
+        .nov-grupo-header:hover { background-color: #382226; }
+        .nov-grupo-body {
+            display: none;
+            padding: 6px 10px;
+            background-color: #181213;
+            border-top: 1px solid #3b2327;
+        }
+        .nov-grupo-body.abierto { display: block; }
     </style>
 </head>
 <body>
@@ -218,27 +230,17 @@
             </div>
         </div>
 
-        <!-- SECCIÓN SEPARADA: PLANO DE NOVEDADES Y REGISTRO DE TURNOS ORDENADO POR INSTALACIÓN -->
+        <!-- SECCIÓN SEPARADA: NOVEDADES Y TURNOS ORDENADOS POR INSTALACIÓN -->
         <div class="row g-3">
-            <!-- Plano Aparte: Novedades y Alertas -->
+            <!-- Plano Aparte: Novedades Agrupadas por Turno e Instalación -->
             <div class="col-lg-5">
                 <div class="card card-novedades p-3 shadow-sm h-100">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="fw-bold text-danger m-0"><i class="fa-solid fa-bell fa-shake me-2"></i> Registro de Novedades / Alertas</h5>
                         <span id="contador-novedades" class="badge bg-danger">0</span>
                     </div>
-                    <div class="table-responsive" style="max-height: 340px; overflow-y: auto;">
-                        <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
-                            <thead>
-                                <tr>
-                                    <th>Hora / Fecha</th>
-                                    <th>Instalación / Alerta</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tabla-novedades">
-                                <!-- Novedades separadas de las rondas -->
-                            </tbody>
-                        </table>
+                    <div id="contenedor-novedades-turnos" style="max-height: 340px; overflow-y: auto; padding-right: 4px;">
+                        <!-- Novedades agrupadas por turnos e instalaciones -->
                     </div>
                 </div>
             </div>
@@ -263,9 +265,10 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         let segundosParaSync = 15;
-        // Recordar qué turnos e instalaciones tiene abiertos el operador para no cerrarlos al auto-refrescar
         let turnosAbiertos = new Set();
         let instalacionesAbiertas = new Set();
+        let turnosNovAbiertos = new Set();
+        let instNovAbiertas = new Set();
         let primerRenderTurnos = true;
 
         setInterval(() => {
@@ -307,9 +310,7 @@
                 btn.classList.replace('btn-danger', 'btn-outline-info');
             }
 
-            setTimeout(() => {
-                map.invalidateSize();
-            }, 260);
+            setTimeout(() => { map.invalidateSize(); }, 260);
         }
 
         document.addEventListener('keydown', function(e) {
@@ -432,6 +433,40 @@
             }
         }
 
+        function toggleTurnoNovAcordeon(codigoTurno) {
+            const body = document.getElementById(`cuerpo-nov-${codigoTurno}`);
+            const icono = document.getElementById(`icono-nov-${codigoTurno}`);
+            if (!body) return;
+
+            const estaAbierto = body.classList.contains('abierto');
+            if (estaAbierto) {
+                body.classList.remove('abierto');
+                if (icono) icono.classList.remove('rotado');
+                turnosNovAbiertos.delete(codigoTurno);
+            } else {
+                body.classList.add('abierto');
+                if (icono) icono.classList.add('rotado');
+                turnosNovAbiertos.add(codigoTurno);
+            }
+        }
+
+        function toggleInstalacionNovAcordeon(claveUnica) {
+            const body = document.getElementById(`inst-nov-body-${claveUnica}`);
+            const icono = document.getElementById(`inst-nov-icono-${claveUnica}`);
+            if (!body) return;
+
+            const estaAbierto = body.classList.contains('abierto');
+            if (estaAbierto) {
+                body.classList.remove('abierto');
+                if (icono) icono.classList.remove('rotado');
+                instNovAbiertas.delete(claveUnica);
+            } else {
+                body.classList.add('abierto');
+                if (icono) icono.classList.add('rotado');
+                instNovAbiertas.add(claveUnica);
+            }
+        }
+
         function expandirContraerInstalacionesTurno(codigoTurno, expandir, event) {
             if (event) event.stopPropagation();
             const contenedorTurno = document.getElementById(`cuerpo-${codigoTurno}`);
@@ -463,12 +498,17 @@
                 const historial = await response.json();
                 
                 const contenedorTurnos = document.getElementById('contenedor-turnos');
-                const tbodyNovedades = document.getElementById('tabla-novedades');
-                tbodyNovedades.innerHTML = '';
+                const contenedorNovedadesTurnos = document.getElementById('contenedor-novedades-turnos');
+                
+                contenedorTurnos.innerHTML = '';
+                contenedorNovedadesTurnos.innerHTML = '';
 
                 let countNovedades = 0;
                 const gruposTurnos = {};
                 const ordenTurnos = [];
+
+                const gruposNovedadesTurnos = {};
+                const ordenNovedadesTurnos = [];
 
                 let codigoActualGlobal = null;
                 let etiquetaActualGlobal = null;
@@ -478,15 +518,12 @@
                     etiquetaActualGlobal = historial[0].turno_actual_etiqueta;
                 }
 
-                // Asegurar que el turno actual figure siempre arriba aunque tenga 0 rondas
                 if (codigoActualGlobal && etiquetaActualGlobal) {
-                    gruposTurnos[codigoActualGlobal] = {
-                        codigo: codigoActualGlobal,
-                        etiqueta: etiquetaActualGlobal,
-                        esActual: true,
-                        rondas: []
-                    };
+                    gruposTurnos[codigoActualGlobal] = { codigo: codigoActualGlobal, etiqueta: etiquetaActualGlobal, esActual: true, rondas: [] };
                     ordenTurnos.push(codigoActualGlobal);
+
+                    gruposNovedadesTurnos[codigoActualGlobal] = { codigo: codigoActualGlobal, etiqueta: etiquetaActualGlobal, esActual: true, novedades: [] };
+                    ordenNovedadesTurnos.push(codigoActualGlobal);
                 }
 
                 historial.forEach(h => {
@@ -500,32 +537,32 @@
 
                     if (esNovedad) {
                         countNovedades++;
-                        const asuntoLimpio = objDetalle.asunto || h.detalles;
-                        const rowNov = document.createElement('tr');
-                        rowNov.style.backgroundColor = 'rgba(220, 53, 69, 0.2)';
-                        rowNov.innerHTML = `
-                            <td>
-                                <small class="text-warning d-block">${h.fecha_envio || 'Reciente'}</small>
-                                <span class="badge bg-secondary" style="font-size: 10px;">${tEtiqueta}</span>
-                            </td>
-                            <td>
-                                <span class="badge bg-danger mb-1">NOVEDAD</span><br>
-                                <small class="fw-bold text-light">${asuntoLimpio}</small>
-                            </td>
-                        `;
-                        tbodyNovedades.appendChild(rowNov);
+                        if (!gruposNovedadesTurnos[tCodigo]) {
+                            gruposNovedadesTurnos[tCodigo] = { codigo: tCodigo, etiqueta: tEtiqueta, esActual: (tCodigo === codigoActualGlobal), novedades: [] };
+                            ordenNovedadesTurnos.push(tCodigo);
+                        }
+
+                        let nombreInstNov = (objDetalle.instalacion || '').replace('RONDA - ', '').trim();
+                        if (!nombreInstNov || nombreInstNov === 'General') {
+                            if (h.usuario && h.usuario.includes('(')) {
+                                let match = h.usuario.match(/\(([^)]+)\)/);
+                                if (match) nombreInstNov = match[1].trim();
+                            }
+                        }
+                        if (!nombreInstNov) nombreInstNov = 'GENERAL';
+
+                        gruposNovedadesTurnos[tCodigo].novedades.push({
+                            id: h.id,
+                            fecha_envio: h.fecha_envio,
+                            instalacion: nombreInstNov,
+                            asunto: objDetalle.asunto || h.detalles
+                        });
                     } else {
                         if (!gruposTurnos[tCodigo]) {
-                            gruposTurnos[tCodigo] = {
-                                codigo: tCodigo,
-                                etiqueta: tEtiqueta,
-                                esActual: (tCodigo === codigoActualGlobal),
-                                rondas: []
-                            };
+                            gruposTurnos[tCodigo] = { codigo: tCodigo, etiqueta: tEtiqueta, esActual: (tCodigo === codigoActualGlobal), rondas: [] };
                             ordenTurnos.push(tCodigo);
                         }
 
-                        // Limpiar el nombre de la instalación para agrupar prolijamente
                         let nombreInst = (objDetalle.instalacion || '').replace('RONDA - ', '').trim();
                         if (!nombreInst && h.usuario && h.usuario.includes('/')) {
                             nombreInst = h.usuario.split('/')[1].trim();
@@ -543,18 +580,107 @@
                 });
 
                 document.getElementById('contador-novedades').innerText = countNovedades;
-                if (countNovedades === 0) {
-                    tbodyNovedades.innerHTML = `<tr><td colspan="2" class="text-center text-muted py-3">Sin novedades ni alertas registradas.</td></tr>`;
-                }
 
-                // En la primera carga, abrimos por defecto el turno actual
                 if (primerRenderTurnos && codigoActualGlobal) {
                     turnosAbiertos.add(codigoActualGlobal);
+                    turnosNovAbiertos.add(codigoActualGlobal);
                     primerRenderTurnos = false;
                 }
 
-                contenedorTurnos.innerHTML = '';
+                // ----------------------------------------------------
+                // RENDERIZAR NOVEDADES AGRUPADAS POR TURNO E INSTALACIÓN
+                // ----------------------------------------------------
+                if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
+                    contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
+                } else {
+                    ordenNovedadesTurnos.forEach(cod => {
+                        const grupoNov = gruposNovedadesTurnos[cod];
+                        if (!grupoNov || grupoNov.novedades.length === 0) return;
 
+                        const abiertoNov = turnosNovAbiertos.has(cod);
+                        const iconoTurnoNov = cod.startsWith('NOCHE') ? 'fa-moon text-info' : 'fa-sun text-warning';
+                        const badgeActualNov = grupoNov.esActual ? `<span class="badge bg-success ms-2">EN CURSO</span>` : `<span class="badge bg-secondary ms-2">CERRADO</span>`;
+
+                        // Agrupar por instalación dentro del turno de novedades
+                        const porInstalacionNov = {};
+                        grupoNov.novedades.forEach(n => {
+                            if (!porInstalacionNov[n.instalacion]) porInstalacionNov[n.instalacion] = [];
+                            porInstalacionNov[n.instalacion].push(n);
+                        });
+                        const nombresInstNov = Object.keys(porInstalacionNov).sort();
+
+                        let contenidoNovHTML = '';
+                        nombresInstNov.forEach(instNombre => {
+                            const listaNovInst = porInstalacionNov[instNombre];
+                            const claveNovUnica = `nov_${cod}_${instNombre.replace(/[^a-zA-Z0-9]/g, '')}`;
+                            const novInstAbierta = instNovAbiertas.has(claveNovUnica);
+
+                            let filasNovInstHTML = '';
+                            listaNovInst.forEach(n => {
+                                filasNovInstHTML += `
+                                    <tr>
+                                        <td><small class="text-warning fw-semibold"><i class="fa-regular fa-clock me-1"></i>${n.fecha_envio || 'Reciente'}</small></td>
+                                        <td><small class="text-light fw-bold">${n.asunto}</small></td>
+                                    </tr>
+                                `;
+                            });
+
+                            contenidoNovHTML += `
+                                <div class="nov-grupo-item">
+                                    <div class="nov-grupo-header" onclick="toggleInstalacionNovAcordeon('${claveNovUnica}')">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <i class="fa-solid fa-triangle-exclamation text-danger"></i>
+                                            <span class="fw-bold text-light small">${instNombre}</span>
+                                        </div>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="badge bg-danger">${listaNovInst.length} ${listaNovInst.length === 1 ? 'alerta' : 'alertas'}</span>
+                                            <i id="inst-nov-icono-${claveNovUnica}" class="fa-solid fa-chevron-down text-secondary small chevron-turno ${novInstAbierta ? 'rotado' : ''}"></i>
+                                        </div>
+                                    </div>
+                                    <div id="inst-nov-body-${claveNovUnica}" class="nov-grupo-body ${novInstAbierta ? 'abierto' : ''}">
+                                        <div class="table-responsive">
+                                            <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Hora y Fecha</th>
+                                                        <th>Detalle de la Novedad</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    ${filasNovInstHTML}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        });
+
+                        const bloqueNov = document.createElement('div');
+                        bloqueNov.className = 'turno-item';
+                        bloqueNov.innerHTML = `
+                            <div class="turno-header" onclick="toggleTurnoNovAcordeon('${cod}')">
+                                <div>
+                                    <i class="fa-solid ${iconoTurnoNov} me-2"></i>
+                                    <span class="fw-bold text-light">${grupoNov.etiqueta}</span>
+                                    ${badgeActualNov}
+                                </div>
+                                <div class="d-flex align-items-center gap-3">
+                                    <span class="badge bg-danger">${grupoNov.novedades.length} alertas</span>
+                                    <i id="icono-nov-${cod}" class="fa-solid fa-chevron-down text-light chevron-turno ${abiertoNov ? 'rotado' : ''}"></i>
+                                </div>
+                            </div>
+                            <div id="cuerpo-nov-${cod}" class="turno-body ${abiertoNov ? 'abierto' : ''}">
+                                ${contenidoNovHTML}
+                            </div>
+                        `;
+                        contenedorNovedadesTurnos.appendChild(bloqueNov);
+                    });
+                }
+
+                // ----------------------------------------------------
+                // RENDERIZAR RONDAS AGRUPADAS POR TURNO E INSTALACIÓN
+                // ----------------------------------------------------
                 if (ordenTurnos.length === 0) {
                     contenedorTurnos.innerHTML = `<div class="text-center text-muted py-4">No hay turnos registrados aún.</div>`;
                     return;
@@ -571,19 +697,14 @@
                     if (grupo.rondas.length === 0) {
                         contenidoInternoHTML = `<div class="text-center text-muted py-2 small">Sin rondas registradas en este turno todavía.</div>`;
                     } else {
-                        // Agrupar las rondas de este turno por Instalación
                         const porInstalacion = {};
                         grupo.rondas.forEach(r => {
-                            if (!porInstalacion[r.instalacion]) {
-                                porInstalacion[r.instalacion] = [];
-                            }
+                            if (!porInstalacion[r.instalacion]) porInstalacion[r.instalacion] = [];
                             porInstalacion[r.instalacion].push(r);
                         });
 
-                        // Ordenar nombres de instalación alfabéticamente
                         const nombresInstalaciones = Object.keys(porInstalacion).sort();
 
-                        // Barra superior con botones rápidos para desplegar o plegar todas las instalaciones del turno
                         contenidoInternoHTML += `
                             <div class="d-flex justify-content-between align-items-center mb-2 px-1">
                                 <small class="text-secondary fw-semibold">
@@ -713,7 +834,6 @@
             cargarDatosEnVivo();
         }
 
-        // Carga inicial inmediata
         forzarVerificacion();
 
         function activarPanicoRemoto() {
