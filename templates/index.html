@@ -77,7 +77,7 @@
             background-color: #181818;
             border: 1px solid #343a40;
             border-radius: 6px;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
             overflow: hidden;
         }
         .turno-header {
@@ -95,7 +95,7 @@
         }
         .turno-body {
             display: none;
-            padding: 8px;
+            padding: 10px;
             background-color: #141619;
             border-top: 1px solid #333;
         }
@@ -108,6 +108,38 @@
         .chevron-turno.rotado {
             transform: rotate(180deg);
         }
+
+        /* Estilos para las sub-carpetas por Instalación dentro de cada Turno */
+        .inst-grupo-item {
+            background-color: #1b1e22;
+            border: 1px solid #2f353b;
+            border-left: 3px solid #0dcaf0;
+            border-radius: 5px;
+            margin-bottom: 6px;
+            overflow: hidden;
+        }
+        .inst-grupo-header {
+            padding: 7px 12px;
+            background-color: #1f2328;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background-color 0.15s ease;
+            user-select: none;
+        }
+        .inst-grupo-header:hover {
+            background-color: #282d33;
+        }
+        .inst-grupo-body {
+            display: none;
+            padding: 6px 10px;
+            background-color: #15171a;
+            border-top: 1px solid #2a2e33;
+        }
+        .inst-grupo-body.abierto {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -119,7 +151,7 @@
             </span>
             <div class="d-flex align-items-center gap-3">
                 <span class="badge bg-dark border border-info text-info px-2 py-2" title="Los correos se sincronizan automáticamente cada 30 segundos">
-                    <i id="icono-autosync" class="fa-solid fa-satellite-dish me-1"></i> Auto-Sync: <span id="timer-sync">30s</span>
+                    <i id="icono-autosync" class="fa-solid fa-satellite-dish me-1"></i> Auto-Sync: <span id="timer-sync">15s</span>
                 </span>
                 <button id="btn-sync" onclick="forzarVerificacion()" class="btn btn-outline-warning btn-sm fw-bold">
                     <i id="icono-sync" class="fa-solid fa-sync me-1"></i> Sincronizar Ahora
@@ -186,7 +218,7 @@
             </div>
         </div>
 
-        <!-- SECCIÓN SEPARADA: PLANO DE NOVEDADES Y REGISTRO DE TURNOS DESPLEGABLE -->
+        <!-- SECCIÓN SEPARADA: PLANO DE NOVEDADES Y REGISTRO DE TURNOS ORDENADO POR INSTALACIÓN -->
         <div class="row g-3">
             <!-- Plano Aparte: Novedades y Alertas -->
             <div class="col-lg-5">
@@ -195,7 +227,7 @@
                         <h5 class="fw-bold text-danger m-0"><i class="fa-solid fa-bell fa-shake me-2"></i> Registro de Novedades / Alertas</h5>
                         <span id="contador-novedades" class="badge bg-danger">0</span>
                     </div>
-                    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                    <div class="table-responsive" style="max-height: 340px; overflow-y: auto;">
                         <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
                             <thead>
                                 <tr>
@@ -211,16 +243,16 @@
                 </div>
             </div>
 
-            <!-- Plano de Historial de Rondas Agrupado por Turno (Acordeón Desplegable) -->
+            <!-- Plano de Historial de Rondas Agrupado por Turno y por Instalación -->
             <div class="col-lg-7">
                 <div class="card card-custom p-3 shadow-sm h-100">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="fw-semibold m-0 text-light">
                             <i class="fa-solid fa-folder-tree text-warning me-2"></i> Historial de Turnos y Rondas 
-                            <small class="text-secondary fs-6 ms-1">(Haz clic en un turno para ver sus rondas)</small>
+                            <small class="text-secondary fs-6 ms-1">(Ordenado por instalación)</small>
                         </h5>
                     </div>
-                    <div id="contenedor-turnos" style="max-height: 300px; overflow-y: auto; padding-right: 4px;">
+                    <div id="contenedor-turnos" style="max-height: 340px; overflow-y: auto; padding-right: 4px;">
                         <!-- Bloques de turno cargados dinámicamente -->
                     </div>
                 </div>
@@ -231,8 +263,9 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         let segundosParaSync = 15;
-        // Recordar qué turnos tiene abiertos el usuario para no cerrarlos al auto-refrescar
+        // Recordar qué turnos e instalaciones tiene abiertos el operador para no cerrarlos al auto-refrescar
         let turnosAbiertos = new Set();
+        let instalacionesAbiertas = new Set();
         let primerRenderTurnos = true;
 
         setInterval(() => {
@@ -382,6 +415,48 @@
             }
         }
 
+        function toggleInstalacionAcordeon(claveUnica) {
+            const body = document.getElementById(`inst-body-${claveUnica}`);
+            const icono = document.getElementById(`inst-icono-${claveUnica}`);
+            if (!body) return;
+
+            const estaAbierto = body.classList.contains('abierto');
+            if (estaAbierto) {
+                body.classList.remove('abierto');
+                if (icono) icono.classList.remove('rotado');
+                instalacionesAbiertas.delete(claveUnica);
+            } else {
+                body.classList.add('abierto');
+                if (icono) icono.classList.add('rotado');
+                instalacionesAbiertas.add(claveUnica);
+            }
+        }
+
+        function expandirContraerInstalacionesTurno(codigoTurno, expandir, event) {
+            if (event) event.stopPropagation();
+            const contenedorTurno = document.getElementById(`cuerpo-${codigoTurno}`);
+            if (!contenedorTurno) return;
+
+            const cuerpos = contenedorTurno.querySelectorAll('.inst-grupo-body');
+            const iconos = contenedorTurno.querySelectorAll('.chevron-inst');
+
+            cuerpos.forEach(div => {
+                const clave = div.getAttribute('data-clave');
+                if (expandir) {
+                    div.classList.add('abierto');
+                    if (clave) instalacionesAbiertas.add(clave);
+                } else {
+                    div.classList.remove('abierto');
+                    if (clave) instalacionesAbiertas.delete(clave);
+                }
+            });
+
+            iconos.forEach(ic => {
+                if (expandir) ic.classList.add('rotado');
+                else ic.classList.remove('rotado');
+            });
+        }
+
         async function cargarHistorial() {
             try {
                 const response = await fetch(HISTORIAL_URL);
@@ -449,11 +524,19 @@
                             };
                             ordenTurnos.push(tCodigo);
                         }
+
+                        // Limpiar el nombre de la instalación para agrupar prolijamente
+                        let nombreInst = (objDetalle.instalacion || '').replace('RONDA - ', '').trim();
+                        if (!nombreInst && h.usuario && h.usuario.includes('/')) {
+                            nombreInst = h.usuario.split('/')[1].trim();
+                        }
+                        if (!nombreInst) nombreInst = 'OTRAS INSTALACIONES';
+
                         gruposTurnos[tCodigo].rondas.push({
                             id: h.id,
                             usuario: h.usuario,
                             fecha_envio: h.fecha_envio,
-                            instalacion: objDetalle.instalacion || '',
+                            instalacion: nombreInst,
                             asunto: objDetalle.asunto || h.detalles
                         });
                     }
@@ -483,19 +566,89 @@
                     const iconoTurno = cod.startsWith('NOCHE') ? 'fa-moon text-info' : 'fa-sun text-warning';
                     const badgeActual = grupo.esActual ? `<span class="badge bg-success ms-2">EN CURSO</span>` : `<span class="badge bg-secondary ms-2">CERRADO</span>`;
 
-                    let filasHTML = '';
+                    let contenidoInternoHTML = '';
+
                     if (grupo.rondas.length === 0) {
-                        filasHTML = `<tr><td colspan="4" class="text-center text-muted py-2">Sin rondas registradas en este turno todavía.</td></tr>`;
+                        contenidoInternoHTML = `<div class="text-center text-muted py-2 small">Sin rondas registradas en este turno todavía.</div>`;
                     } else {
+                        // Agrupar las rondas de este turno por Instalación
+                        const porInstalacion = {};
                         grupo.rondas.forEach(r => {
-                            const textoMostrar = r.instalacion ? `${r.instalacion} — ${r.asunto}` : r.asunto;
-                            filasHTML += `
-                                <tr>
-                                    <td><small class="text-muted">#${r.id}</small></td>
-                                    <td><span class="fw-semibold text-info">${r.usuario}</span></td>
-                                    <td><small class="text-warning">${r.fecha_envio || 'Registrado'}</small></td>
-                                    <td><small class="text-truncate d-inline-block" style="max-width: 340px;" title="${textoMostrar}">${textoMostrar}</small></td>
-                                </tr>
+                            if (!porInstalacion[r.instalacion]) {
+                                porInstalacion[r.instalacion] = [];
+                            }
+                            porInstalacion[r.instalacion].push(r);
+                        });
+
+                        // Ordenar nombres de instalación alfabéticamente
+                        const nombresInstalaciones = Object.keys(porInstalacion).sort();
+
+                        // Barra superior con botones rápidos para desplegar o plegar todas las instalaciones del turno
+                        contenidoInternoHTML += `
+                            <div class="d-flex justify-content-between align-items-center mb-2 px-1">
+                                <small class="text-secondary fw-semibold">
+                                    <i class="fa-solid fa-building-shield me-1 text-info"></i> ${nombresInstalaciones.length} instalaciones con actividad
+                                </small>
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-secondary py-0 px-2" style="font-size: 11px;" onclick="expandirContraerInstalacionesTurno('${cod}', true, event)">
+                                        <i class="fa-solid fa-angles-down me-1"></i> Desplegar todas
+                                    </button>
+                                    <button class="btn btn-outline-secondary py-0 px-2" style="font-size: 11px;" onclick="expandirContraerInstalacionesTurno('${cod}', false, event)">
+                                        <i class="fa-solid fa-angles-up me-1"></i> Contraer todas
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+
+                        nombresInstalaciones.forEach(instNombre => {
+                            const listaRondasInst = porInstalacion[instNombre];
+                            const claveLimpia = `${cod}_${instNombre.replace(/[^a-zA-Z0-9]/g, '')}`;
+                            const instAbierta = instalacionesAbiertas.has(claveLimpia);
+
+                            let filasInstHTML = '';
+                            listaRondasInst.forEach((r, idx) => {
+                                filasInstHTML += `
+                                    <tr>
+                                        <td style="width: 55px;"><span class="badge bg-dark border border-secondary text-secondary">Ronda #${listaRondasInst.length - idx}</span></td>
+                                        <td><span class="fw-semibold text-info">${r.usuario}</span></td>
+                                        <td><small class="text-warning fw-semibold"><i class="fa-regular fa-clock me-1"></i>${r.fecha_envio || 'Registrado'}</small></td>
+                                        <td><small class="text-truncate d-inline-block text-light" style="max-width: 280px;" title="${r.asunto}">${r.asunto}</small></td>
+                                    </tr>
+                                `;
+                            });
+
+                            const colorBadgeCant = listaRondasInst.length >= 3 ? 'bg-success' : 'bg-warning text-dark';
+
+                            contenidoInternoHTML += `
+                                <div class="inst-grupo-item">
+                                    <div class="inst-grupo-header" onclick="toggleInstalacionAcordeon('${claveLimpia}')">
+                                        <div class="d-flex align-items-center gap-2">
+                                            <i class="fa-solid fa-building text-info"></i>
+                                            <span class="fw-bold text-light small">RONDA - ${instNombre}</span>
+                                        </div>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <span class="badge ${colorBadgeCant}">${listaRondasInst.length} ${listaRondasInst.length === 1 ? 'ronda' : 'rondas'}</span>
+                                            <i id="inst-icono-${claveLimpia}" class="fa-solid fa-chevron-down text-secondary small chevron-turno chevron-inst ${instAbierta ? 'rotado' : ''}"></i>
+                                        </div>
+                                    </div>
+                                    <div id="inst-body-${claveLimpia}" data-clave="${claveLimpia}" class="inst-grupo-body ${instAbierta ? 'abierto' : ''}">
+                                        <div class="table-responsive">
+                                            <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th>N°</th>
+                                                        <th>Guardia / Origen</th>
+                                                        <th>Fecha y Hora</th>
+                                                        <th>Detalle del Reporte</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    ${filasInstHTML}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
                             `;
                         });
                     }
@@ -510,26 +663,12 @@
                                 ${badgeActual}
                             </div>
                             <div class="d-flex align-items-center gap-3">
-                                <span class="badge bg-primary">${grupo.rondas.length} rondas</span>
+                                <span class="badge bg-primary">${grupo.rondas.length} rondas totales</span>
                                 <i id="icono-${cod}" class="fa-solid fa-chevron-down text-light chevron-turno ${abierto ? 'rotado' : ''}"></i>
                             </div>
                         </div>
                         <div id="cuerpo-${cod}" class="turno-body ${abierto ? 'abierto' : ''}">
-                            <div class="table-responsive">
-                                <table class="table table-dark table-sm table-dark-custom table-hover align-middle m-0">
-                                    <thead>
-                                        <tr>
-                                            <th>ID</th>
-                                            <th>Origen / Guardia</th>
-                                            <th>Hora de Envío</th>
-                                            <th>Detalles de la Ronda</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${filasHTML}
-                                    </tbody>
-                                </table>
-                            </div>
+                            ${contenidoInternoHTML}
                         </div>
                     `;
                     contenedorTurnos.appendChild(bloque);
