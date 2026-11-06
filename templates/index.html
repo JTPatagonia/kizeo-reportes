@@ -69,7 +69,6 @@
         .table-dark-custom { background-color: #1e1e1e; color: #e0e0e0; }
         .table-dark-custom th, .table-dark-custom td { border-color: #333; }
 
-        /* Estilos para carpetas de Turnos y sub-carpetas por Instalación */
         .turno-item {
             background-color: #181818;
             border: 1px solid #343a40;
@@ -125,7 +124,6 @@
         }
         .inst-grupo-body.abierto { display: block; }
 
-        /* Estilos específicos para Novedades agrupadas por Turno / Instalación */
         .nov-grupo-item {
             background-color: #22181a;
             border: 1px solid #482328;
@@ -162,7 +160,7 @@
                 <i class="fa-solid fa-shield-halved text-danger me-2"></i> CENTRAL DE MONITOREO 24/7 — KIZEO AUTOMÁTICO
             </span>
             <div class="d-flex align-items-center gap-3">
-                <span class="badge bg-dark border border-info text-info px-2 py-2" title="Los correos se sincronizan automáticamente cada 30 segundos">
+                <span class="badge bg-dark border border-info text-info px-2 py-2" title="Sincronización automática cada 15 segundos">
                     <i id="icono-autosync" class="fa-solid fa-satellite-dish me-1"></i> Auto-Sync: <span id="timer-sync">15s</span>
                 </span>
                 <button id="btn-sync" onclick="forzarVerificacion()" class="btn btn-outline-warning btn-sm fw-bold">
@@ -230,9 +228,7 @@
             </div>
         </div>
 
-        <!-- SECCIÓN SEPARADA: NOVEDADES Y TURNOS ORDENADOS POR INSTALACIÓN -->
         <div class="row g-3">
-            <!-- Plano Aparte: Novedades Agrupadas por Turno e Instalación -->
             <div class="col-lg-5">
                 <div class="card card-novedades p-3 shadow-sm h-100">
                     <div class="d-flex justify-content-between align-items-center mb-3">
@@ -245,7 +241,6 @@
                 </div>
             </div>
 
-            <!-- Plano de Historial de Rondas Agrupado por Turno y por Instalación -->
             <div class="col-lg-7">
                 <div class="card card-custom p-3 shadow-sm h-100">
                     <div class="d-flex justify-content-between align-items-center mb-3">
@@ -270,6 +265,7 @@
         let turnosNovAbiertos = new Set();
         let instNovAbiertas = new Set();
         let primerRenderTurnos = true;
+        let ultimaAlertaIdConocida = null;
 
         setInterval(() => {
             document.getElementById('reloj-central').innerText = new Date().toLocaleTimeString();
@@ -290,6 +286,30 @@
         let markersLayer = L.layerGroup().addTo(map);
         const API_URL = "/api/estado-instalaciones";
         const HISTORIAL_URL = "/api/historial-rondas";
+
+        function reproducirSonidoAlerta() {
+            try {
+                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                let osc = audioCtx.createOscillator();
+                let gain = audioCtx.createGain();
+                osc.type = 'square';
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                let time = audioCtx.currentTime;
+                
+                // Patrón de alerta de doble pitido fuerte
+                osc.frequency.setValueAtTime(800, time);
+                osc.frequency.setValueAtTime(1200, time + 0.15);
+                osc.frequency.setValueAtTime(800, time + 0.3);
+                osc.frequency.setValueAtTime(1200, time + 0.45);
+
+                gain.gain.setValueAtTime(0.3, time);
+                osc.start();
+                osc.stop(time + 0.65);
+            } catch(e) {
+                console.log("Audio bloqueado por el navegador hasta interactuar con la página", e);
+            }
+        }
 
         function togglePantallaCompletaMapa() {
             const contenedor = document.getElementById('contenedor-mapa');
@@ -512,6 +532,7 @@
 
                 let codigoActualGlobal = null;
                 let etiquetaActualGlobal = null;
+                let nuevaAlertaDetectada = false;
 
                 if (historial.length > 0) {
                     codigoActualGlobal = historial[0].turno_actual_codigo;
@@ -537,6 +558,15 @@
 
                     if (esNovedad) {
                         countNovedades++;
+
+                        // Detectar si esta alerta es más nueva que la última conocida (para emitir sonido)
+                        if (ultimaAlertaIdConocida !== null && h.id > ultimaAlertaIdConocida) {
+                            nuevaAlertaDetectada = true;
+                        }
+                        if (ultimaAlertaIdConocida === null || h.id > ultimaAlertaIdConocida) {
+                            ultimaAlertaIdConocida = h.id;
+                        }
+
                         if (!gruposNovedadesTurnos[tCodigo]) {
                             gruposNovedadesTurnos[tCodigo] = { codigo: tCodigo, etiqueta: tEtiqueta, esActual: (tCodigo === codigoActualGlobal), novedades: [] };
                             ordenNovedadesTurnos.push(tCodigo);
@@ -581,15 +611,29 @@
 
                 document.getElementById('contador-novedades').innerText = countNovedades;
 
+                // Si se detectó una alerta nueva durante el refresco automático, emitir sonido
+                if (nuevaAlertaDetectada) {
+                    reproducirSonidoAlerta();
+                } else if (ultimaAlertaIdConocida === null && countNovedades > 0) {
+                    // Inicializar referencia al cargar la página por primera vez sin hacer sonar
+                    let maxId = 0;
+                    historial.forEach(h => {
+                        let d = {};
+                        try { d = JSON.parse(h.detalles || '{}'); } catch(e){}
+                        if ((h.usuario && (h.usuario.includes('NOVEDAD') || h.usuario.includes('ALERTA'))) || d.tipo === 'NOVEDAD') {
+                            if (h.id > maxId) maxId = h.id;
+                        }
+                    });
+                    ultimaAlertaIdConocida = maxId;
+                }
+
                 if (primerRenderTurnos && codigoActualGlobal) {
                     turnosAbiertos.add(codigoActualGlobal);
                     turnosNovAbiertos.add(codigoActualGlobal);
                     primerRenderTurnos = false;
                 }
 
-                // ----------------------------------------------------
-                // RENDERIZAR NOVEDADES AGRUPADAS POR TURNO E INSTALACIÓN
-                // ----------------------------------------------------
+                // Renderizar Novedades agrupadas
                 if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
                     contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
                 } else {
@@ -601,7 +645,6 @@
                         const iconoTurnoNov = cod.startsWith('NOCHE') ? 'fa-moon text-info' : 'fa-sun text-warning';
                         const badgeActualNov = grupoNov.esActual ? `<span class="badge bg-success ms-2">EN CURSO</span>` : `<span class="badge bg-secondary ms-2">CERRADO</span>`;
 
-                        // Agrupar por instalación dentro del turno de novedades
                         const porInstalacionNov = {};
                         grupoNov.novedades.forEach(n => {
                             if (!porInstalacionNov[n.instalacion]) porInstalacionNov[n.instalacion] = [];
@@ -678,9 +721,7 @@
                     });
                 }
 
-                // ----------------------------------------------------
-                // RENDERIZAR RONDAS AGRUPADAS POR TURNO E INSTALACIÓN
-                // ----------------------------------------------------
+                // Renderizar Rondas agrupadas
                 if (ordenTurnos.length === 0) {
                     contenedorTurnos.innerHTML = `<div class="text-center text-muted py-4">No hay turnos registrados aún.</div>`;
                     return;
