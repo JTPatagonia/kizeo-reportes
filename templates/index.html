@@ -293,19 +293,38 @@
         const API_URL = "/api/estado-instalaciones";
         const HISTORIAL_URL = "/api/historial-rondas";
 
+        // Sirena de emergencia real de 5 segundos de duración
         function reproducirSonidoAlerta() {
             try {
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 let osc = audioCtx.createOscillator();
                 let gain = audioCtx.createGain();
-                osc.type = 'square'; osc.connect(gain); gain.connect(audioCtx.destination);
+                
+                osc.type = 'sawtooth';
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                
                 let time = audioCtx.currentTime;
-                osc.frequency.setValueAtTime(800, time);
-                osc.frequency.setValueAtTime(1200, time + 0.15);
-                osc.frequency.setValueAtTime(800, time + 0.3);
-                osc.frequency.setValueAtTime(1200, time + 0.45);
-                gain.gain.setValueAtTime(0.3, time);
-                osc.start(); osc.stop(time + 0.65);
+                let duracionTotal = 5.0; // 5 segundos exactos
+                let ciclos = 5;
+                let paso = duracionTotal / (ciclos * 2);
+                
+                for (let i = 0; i < ciclos; i++) {
+                    let tInicio = time + (i * paso * 2);
+                    let tMitad = tInicio + paso;
+                    let tFin = tInicio + (paso * 2);
+                    
+                    osc.frequency.setValueAtTime(450, tInicio);
+                    osc.frequency.linearRampToValueAtTime(1100, tMitad);
+                    osc.frequency.linearRampToValueAtTime(450, tFin);
+                }
+
+                gain.gain.setValueAtTime(0.35, time);
+                gain.gain.setValueAtTime(0.35, time + duracionTotal - 0.2);
+                gain.gain.linearRampToValueAtTime(0.001, time + duracionTotal);
+
+                osc.start(time);
+                osc.stop(time + duracionTotal);
             } catch(e) {}
         }
 
