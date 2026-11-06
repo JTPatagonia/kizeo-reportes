@@ -57,7 +57,7 @@ class SesionOperador(db.Model):
     turno = db.Column(db.String(100), nullable=False)
     login_time = db.Column(db.String(50), nullable=False)
     logout_time = db.Column(db.String(50), nullable=True)
-    estado = db.Column(db.String(20), default="ACTIVO") # ACTIVO / CERRADO
+    estado = db.Column(db.String(20), default="ACTIVO")
 
 with app.app_context():
     db.create_all()
@@ -67,7 +67,6 @@ with app.app_context():
     except Exception:
         db.session.rollback()
 
-    # Crear un operador administrador por defecto si no existe ninguno
     if Operador.query.count() == 0:
         admin = Operador(
             username="admin",
@@ -333,8 +332,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 pass
         return False, f"Error IMAP: {str(e)}", 0
 
-# --- RUTAS DE AUTENTICACIÓN Y AUDITORÍA DE OPERADORES ---
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'GET':
@@ -349,7 +346,6 @@ def login():
         session['operador_id'] = operador.id
         session['nombre_operador'] = operador.nombre_completo
 
-        # Registrar inicio de sesión en auditoría
         chile_tz = pytz.timezone('America/Santiago')
         ahora_chile = datetime.now(chile_tz)
         _, etiqueta_turno, _ = calcular_info_turno(ahora_chile)
@@ -435,8 +431,6 @@ def crear_operador():
     except Exception as e:
         db.session.rollback()
         return jsonify({"status": "error", "message": str(e)}), 500
-
-# --- RUTAS DE LA CENTRAL ---
 
 @app.route('/')
 def home():
@@ -588,7 +582,7 @@ def recibir_webhook():
                     usuario=str(usuario),
                     fecha_envio=str(fecha),
                     datos_json=json.dumps({
-                        "tipo": "RONDA",
+                        "type": "RONDA",
                         "instalacion": nombre_inst,
                         "asunto": form_name,
                         "turno_codigo": turno_cod,
