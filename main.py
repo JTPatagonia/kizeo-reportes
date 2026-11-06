@@ -10,7 +10,7 @@ import unicodedata
 import base64
 from datetime import datetime, timedelta
 import pytz
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, Response
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import db, ReporteKizeo
@@ -272,28 +272,19 @@ def verificar_correos_kizeo(forzar_reconteo=False):
 
                 for part_m in msg.walk():
                     content_type = part_m.get_content_type()
-                    content_disposition = str(part_m.get("Content-Disposition", ""))
                     filename = part_m.get_filename()
-                    
                     if filename:
                         filename = decodificar_encabezado(filename)
 
-                    # Detección ultra flexible para Kizeo (PDF por tipo, nombre o binario)
-                    es_pdf = (
-                        content_type == "application/pdf" or 
-                        (filename and ".pdf" in filename.lower()) or 
-                        ("pdf" in content_type.lower()) or
-                        (filename and filename.endswith('.pdf'))
-                    )
-
-                    if es_pdf:
-                        try:
-                            pdf_bytes = part_m.get_payload(decode=True)
-                            if pdf_bytes:
-                                pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                    try:
+                        payload_bytes = part_m.get_payload(decode=True)
+                        if payload_bytes:
+                            # Detectar si el binario comienza con la firma real de un PDF (%PDF)
+                            if payload_bytes.startswith(b'%PDF'):
+                                pdf_base64 = base64.b64encode(payload_bytes).decode('utf-8')
                                 nombre_pdf = filename or "reporte_kizeo.pdf"
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
 
                     if content_type == "text/plain" and not cuerpo_texto:
                         try:
@@ -315,15 +306,12 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     continue
 
                 uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}-{fecha_correo_str}"
-                
-                # Si el reporte ya existe pero no tenía el PDF guardado, permitimos actualizarlo o limpiamos la base si se fuerza reconteo
                 tiene_pdf_bool = bool(pdf_base64)
 
                 if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
 
-                    # Verificar si ya existe para actualizar el PDF si faltaba
                     rep_existente = ReporteKizeo.query.filter_by(form_id=uid_unico).first()
                     if rep_existente:
                         if not json.loads(rep_existente.datos_json or '{}').get('tiene_pdf') and tiene_pdf_bool:
@@ -594,12 +582,30 @@ def obtener_detalle_reporte(reporte_id):
             "remitente": detalles.get('remitente', 'Desconocido'),
             "instalacion": detalles.get('instalacion', 'General'),
             "tiene_pdf": detalles.get('tiene_pdf', False),
-            "pdf_base64": detalles.get('pdf_base64', ''),
             "nombre_pdf": detalles.get('nombre_pdf', 'reporte.pdf'),
             "tipo": detalles.get('tipo', 'INFORME')
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# Ruta dedicada para servir el PDF de manera directa y limpia al visor
+@app.route('/api/ver-pdf/<int:reporte_id>')
+def servir_pdf_dinamico(reporte_id):
+    if 'operador_id' not in session:
+        return "No autorizado", 401
+    try:
+        rep = ReporteKizeo.query.get(reporte_id)
+        if not rep:
+            return "No encontrado", 404
+        detalles = json.loads(rep.datos_json or '{}')
+        pdf_b64 = detalles.get('pdf_base64', '')
+        if not pdf_b64:
+            return "PDF no disponible", 404
+        
+        pdf_bytes = base64.b64decode(pdf_b64)
+        return Response(pdf_bytes, mimetype='application/pdf')
+    except Exception as e:
+        return str(e), 500
 
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
