@@ -507,8 +507,6 @@ def obtener_estado_instalaciones():
         return jsonify({"error": "No autorizado"}), 401
     try:
         verificar_y_actualizar_turnos()
-        # Se omite el IMAP síncrono aquí para evitar que la página se congele al iniciar
-
         instalaciones = InstalacionDB.query.order_by(InstalacionDB.id.asc()).all()
         _, etiqueta_turno_actual, _ = obtener_datos_turno_actual()
         resultado = [{
@@ -568,6 +566,8 @@ def obtener_detalle_reporte(reporte_id):
             return jsonify({"error": "Reporte no encontrado"}), 404
         
         detalles = json.loads(rep.datos_json or '{}')
+        tiene_pdf = bool(detalles.get('tiene_pdf') and detalles.get('pdf_base64'))
+        
         return jsonify({
             "id": rep.id,
             "usuario": rep.usuario,
@@ -576,7 +576,7 @@ def obtener_detalle_reporte(reporte_id):
             "cuerpo": detalles.get('cuerpo', 'Sin contenido en el cuerpo del mensaje.'),
             "remitente": detalles.get('remitente', 'Desconocido'),
             "instalacion": detalles.get('instalacion', 'General'),
-            "tiene_pdf": detalles.get('tiene_pdf', False),
+            "tiene_pdf": tiene_pdf,
             "nombre_pdf": detalles.get('nombre_pdf', 'reporte.pdf'),
             "tipo": detalles.get('tipo', 'INFORME')
         }), 200
@@ -590,16 +590,17 @@ def servir_pdf_dinamico(reporte_id):
     try:
         rep = ReporteKizeo.query.get(reporte_id)
         if not rep:
-            return "No encontrado", 404
+            return "Reporte no encontrado", 404
+        
         detalles = json.loads(rep.datos_json or '{}')
         pdf_b64 = detalles.get('pdf_base64', '')
         if not pdf_b64:
-            return "PDF no disponible", 404
+            return "Este reporte no incluye un archivo PDF adjunto.", 404
         
         pdf_bytes = base64.b64decode(pdf_b64)
         return Response(pdf_bytes, mimetype='application/pdf')
     except Exception as e:
-        return str(e), 500
+        return f"Error al procesar el PDF: {str(e)}", 500
 
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
