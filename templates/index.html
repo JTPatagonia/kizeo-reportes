@@ -230,37 +230,32 @@
         </div>
     </div>
 
-    <!-- MODAL VISOR DE CORREO Y PDF -->
+    <!-- MODAL VISOR DE CORREO Y PDF (Abre en pestaña nueva) -->
     <div class="modal fade" id="modalDetalleCorreo" tabindex="-1">
-        <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content bg-dark text-light border border-secondary shadow-lg">
                 <div class="modal-header border-secondary bg-black">
-                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-file-pdf text-danger me-2"></i> Visor de Alerta y PDF Adjunto</h5>
+                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-file-pdf text-danger me-2"></i> Detalle de la Alerta y Reporte</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body" style="background-color: #181818;">
-                    <div class="row g-3">
-                        <div class="col-lg-4">
-                            <div class="p-3 bg-black rounded border border-secondary mb-3">
-                                <div class="small text-warning mb-1"><strong class="text-light">Remitente:</strong> <span id="correo-remitente">-</span></div>
-                                <div class="small text-warning mb-1"><strong class="text-light">Fecha:</strong> <span id="correo-fecha">-</span></div>
-                                <div class="small text-warning"><strong class="text-light">Asunto:</strong> <span id="correo-asunto" class="fw-bold text-light">-</span></div>
-                            </div>
-                            <label class="form-label small text-secondary fw-semibold">Resumen del Mensaje:</label>
-                            <div id="correo-cuerpo" class="p-3 rounded border border-secondary bg-dark text-light" style="max-height: 350px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px;">Cargando...</div>
-                        </div>
-                        <div class="col-lg-8">
-                            <label class="form-label small text-secondary fw-semibold"><i class="fa-solid fa-eye text-info me-1"></i> Documento PDF Adjunto:</label>
-                            <div id="contenedor-visor-pdf" class="border border-secondary rounded bg-black" style="height: 500px; display: flex; align-items: center; justify-content: center;">
-                                <span class="text-muted small">Cargando visor PDF...</span>
-                            </div>
-                        </div>
+                    <div class="p-3 bg-black rounded border border-secondary mb-3">
+                        <div class="small text-warning mb-1"><strong class="text-light">Remitente:</strong> <span id="correo-remitente">-</span></div>
+                        <div class="small text-warning mb-1"><strong class="text-light">Fecha:</strong> <span id="correo-fecha">-</span></div>
+                        <div class="small text-warning"><strong class="text-light">Asunto:</strong> <span id="correo-asunto" class="fw-bold text-light">-</span></div>
+                    </div>
+                    <label class="form-label small text-secondary fw-semibold">Resumen del Mensaje:</label>
+                    <div id="correo-cuerpo" class="p-3 rounded border border-secondary bg-dark text-light mb-3" style="max-height: 200px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px;">Cargando...</div>
+
+                    <div id="contenedor-alerta-pdf" class="alert alert-secondary py-3 text-center d-none m-0">
+                        <i class="fa-solid fa-file-pdf text-danger fa-2x mb-2"></i>
+                        <p class="small text-light mb-2">Este reporte contiene el informe oficial en PDF generado por Kizeo.</p>
+                        <a id="enlace-abrir-pdf" href="#" target="_blank" class="btn btn-danger btn-sm fw-bold px-4">
+                            <i class="fa-solid fa-external-link-alt me-1"></i> Abrir y Revisar PDF Completo
+                        </a>
                     </div>
                 </div>
                 <div class="modal-footer border-secondary bg-black">
-                    <a id="btn-descargar-pdf" href="#" target="_blank" class="btn btn-outline-danger btn-sm fw-bold d-none">
-                        <i class="fa-solid fa-download me-1"></i> Abrir PDF en Pantalla Completa
-                    </a>
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
                 </div>
             </div>
@@ -415,8 +410,7 @@
             document.getElementById('correo-fecha').innerText = "Cargando...";
             document.getElementById('correo-asunto').innerText = "Cargando...";
             document.getElementById('correo-cuerpo').innerText = "Obteniendo datos...";
-            document.getElementById('contenedor-visor-pdf').innerHTML = `<span class="text-muted small">Cargando PDF...</span>`;
-            document.getElementById('btn-descargar-pdf').classList.add('d-none');
+            document.getElementById('contenedor-alerta-pdf').classList.add('d-none');
 
             try {
                 const res = await fetch(`/api/detalle-reporte/${reporteId}`);
@@ -429,19 +423,9 @@
 
                     if (data.tiene_pdf) {
                         const pdfUrl = `/api/ver-pdf/${reporteId}`;
-                        document.getElementById('contenedor-visor-pdf').innerHTML = `
-                            <iframe src="${pdfUrl}" width="100%" height="100%" style="border:none;"></iframe>
-                        `;
-                        const btnDescargar = document.getElementById('btn-descargar-pdf');
-                        btnDescargar.href = pdfUrl;
-                        btnDescargar.classList.remove('d-none');
-                    } else {
-                        document.getElementById('contenedor-visor-pdf').innerHTML = `
-                            <div class="text-center text-muted p-4">
-                                <i class="fa-solid fa-triangle-exclamation fa-2x mb-2 text-warning"></i>
-                                <p class="small m-0">Este reporte no contiene ningún archivo PDF adjunto en el correo.</p>
-                            </div>
-                        `;
+                        const enlacePdf = document.getElementById('enlace-abrir-pdf');
+                        enlacePdf.href = pdfUrl;
+                        document.getElementById('contenedor-alerta-pdf').classList.remove('d-none');
                     }
                 } else {
                     document.getElementById('correo-cuerpo').innerText = "Error al cargar el reporte.";
