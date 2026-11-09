@@ -314,17 +314,21 @@
         let ultimaRondaIdConocida = null;
 
         setInterval(() => {
-            document.getElementById('reloj-central').innerText = new Date().toLocaleTimeString();
+            document.getElementById('reloj-central')?.innerText = new Date().toLocaleTimeString();
             segundosParaSync--;
             if (segundosParaSync <= 0) {
                 segundosParaSync = 15;
                 cicloAutomatico();
             }
-            document.getElementById('timer-sync').innerText = segundosParaSync + 's';
+            const timerEl = document.getElementById('timer-sync');
+            if (timerEl) timerEl.innerText = segundosParaSync + 's';
         }, 1000);
 
         const map = L.map('map').setView([-33.4489, -70.6693], 10);
         L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+        // Forzar renderizado inmediato de las teselas del mapa para evitar bloques grises
+        setTimeout(() => { map.invalidateSize(); }, 300);
 
         let markersLayer = L.layerGroup().addTo(map);
         const API_URL = "/api/estado-instalaciones";
@@ -401,7 +405,6 @@
             });
         }
 
-        // Carga del PDF usando la ruta limpia /api/ver-pdf/<id>
         async function verDetalleReporte(reporteId) {
             const modal = new bootstrap.Modal(document.getElementById('modalDetalleCorreo'));
             modal.show();
@@ -647,7 +650,7 @@
                     primerRenderTurnos = false;
                 }
 
-                // Render Novedades (INTERACTIVAS)
+                // Render Novedades
                 if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
                     contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
                 } else {
@@ -693,7 +696,7 @@
                     });
                 }
 
-                // Render Rondas (ESTÁTICAS)
+                // Render Rondas
                 ordenTurnos.forEach(cod => {
                     const g = gruposTurnos[cod];
                     const abierto = turnosAbiertos.has(cod);

@@ -279,7 +279,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     try:
                         payload_bytes = part_m.get_payload(decode=True)
                         if payload_bytes:
-                            # Detectar si el binario comienza con la firma real de un PDF (%PDF)
                             if payload_bytes.startswith(b'%PDF'):
                                 pdf_base64 = base64.b64encode(payload_bytes).decode('utf-8')
                                 nombre_pdf = filename or "reporte_kizeo.pdf"
@@ -506,13 +505,9 @@ def home():
 def obtener_estado_instalaciones():
     if 'operador_id' not in session:
         return jsonify({"error": "No autorizado"}), 401
-    global ultimo_chequeo_imap
     try:
         verificar_y_actualizar_turnos()
-
-        ahora_ts = time.time()
-        if (ahora_ts - ultimo_chequeo_imap) >= 30:
-            verificar_correos_kizeo(forzar_reconteo=False)
+        # Se omite el IMAP síncrono aquí para evitar que la página se congele al iniciar
 
         instalaciones = InstalacionDB.query.order_by(InstalacionDB.id.asc()).all()
         _, etiqueta_turno_actual, _ = obtener_datos_turno_actual()
@@ -588,7 +583,6 @@ def obtener_detalle_reporte(reporte_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Ruta dedicada para servir el PDF de manera directa y limpia al visor
 @app.route('/api/ver-pdf/<int:reporte_id>')
 def servir_pdf_dinamico(reporte_id):
     if 'operador_id' not in session:
