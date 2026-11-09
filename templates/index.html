@@ -14,7 +14,7 @@
         .card-custom { background-color: #1e1e1e; border: 1px solid #333; border-radius: 8px; }
         .card-novedades { background-color: #1e1e1e; border: 1px solid #dc3545; border-radius: 8px; }
         
-        #map { height: 60vh; border-radius: 8px; border: 1px solid #444; z-index: 1; transition: height 0.25s ease; }
+        #map { height: 60vh; border-radius: 8px; border: 1px solid #444; z-index: 1; width: 100%; }
 
         .mapa-fullscreen-overlay {
             position: fixed !important;
@@ -313,8 +313,18 @@
         let ultimaAlertaIdConocida = null;
         let ultimaRondaIdConocida = null;
 
+        // Inicializar mapa de forma segura
+        const map = L.map('map').setView([-33.4489, -70.6693], 10);
+        L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
+
+        let markersLayer = L.layerGroup().addTo(map);
+        const API_URL = "/api/estado-instalaciones";
+        const HISTORIAL_URL = "/api/historial-rondas";
+
+        // Forzar recarga del tamaño del mapa tras renderizar
+        setTimeout(() => { map.invalidateSize(); }, 300);
+
         setInterval(() => {
-            document.getElementById('reloj-central')?.innerText = new Date().toLocaleTimeString();
             segundosParaSync--;
             if (segundosParaSync <= 0) {
                 segundosParaSync = 15;
@@ -323,16 +333,6 @@
             const timerEl = document.getElementById('timer-sync');
             if (timerEl) timerEl.innerText = segundosParaSync + 's';
         }, 1000);
-
-        const map = L.map('map').setView([-33.4489, -70.6693], 10);
-        L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
-
-        // Forzar renderizado inmediato de las teselas del mapa para evitar bloques grises
-        setTimeout(() => { map.invalidateSize(); }, 300);
-
-        let markersLayer = L.layerGroup().addTo(map);
-        const API_URL = "/api/estado-instalaciones";
-        const HISTORIAL_URL = "/api/historial-rondas";
 
         function reproducirSonidoAlerta() {
             try {
@@ -383,26 +383,28 @@
         async function abrirModalAuditoria() {
             const modal = new bootstrap.Modal(document.getElementById('modalAuditoria'));
             modal.show();
-            const res = await fetch('/api/sesiones-auditoria');
-            const sesiones = await res.json();
-            const tbody = document.getElementById('tabla-auditoria');
-            tbody.innerHTML = '';
-            if (sesiones.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">Sin registros de sesiones.</td></tr>`;
-                return;
-            }
-            sesiones.forEach(s => {
-                const badge = s.estado === 'ACTIVO' ? '<span class="badge bg-success">ACTIVO</span>' : '<span class="badge bg-secondary">CERRADO</span>';
-                tbody.innerHTML += `
-                    <tr>
-                        <td><span class="fw-bold text-info">${s.nombre}</span></td>
-                        <td><small>${s.turno}</small></td>
-                        <td><small class="text-warning">${s.login}</small></td>
-                        <td><small class="text-muted">${s.logout}</small></td>
-                        <td>${badge}</td>
-                    </tr>
-                `;
-            });
+            try {
+                const res = await fetch('/api/sesiones-auditoria');
+                const sesiones = await res.json();
+                const tbody = document.getElementById('tabla-auditoria');
+                tbody.innerHTML = '';
+                if (sesiones.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">Sin registros de sesiones.</td></tr>`;
+                    return;
+                }
+                sesiones.forEach(s => {
+                    const badge = s.estado === 'ACTIVO' ? '<span class="badge bg-success">ACTIVO</span>' : '<span class="badge bg-secondary">CERRADO</span>';
+                    tbody.innerHTML += `
+                        <tr>
+                            <td><span class="fw-bold text-info">${s.nombre}</span></td>
+                            <td><small>${s.turno}</small></td>
+                            <td><small class="text-warning">${s.login}</small></td>
+                            <td><small class="text-muted">${s.logout}</small></td>
+                            <td>${badge}</td>
+                        </tr>
+                    `;
+                });
+            } catch(err) { console.log(err); }
         }
 
         async function verDetalleReporte(reporteId) {
@@ -764,6 +766,9 @@
             cargarDatosEnVivo();
         }
 
+        // Carga inicial automática inmediata al arrancar la página
+        cargarDatosEnVivo();
+        cargarHistorial();
         forzarVerificacion();
 
         function activarPanicoRemoto() {
