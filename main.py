@@ -7,10 +7,9 @@ from email.header import decode_header
 from email.utils import parsedate_to_datetime
 import re
 import unicodedata
-import base64
 from datetime import datetime, timedelta
 import pytz
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for, Response
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import db, ReporteKizeo
@@ -267,24 +266,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
                 cuerpo_texto = ""
-                pdf_base64 = ""
-                nombre_pdf = ""
-
                 for part_m in msg.walk():
                     content_type = part_m.get_content_type()
-                    filename = part_m.get_filename()
-                    if filename:
-                        filename = decodificar_encabezado(filename)
-
-                    try:
-                        payload_bytes = part_m.get_payload(decode=True)
-                        if payload_bytes:
-                            if payload_bytes.startswith(b'%PDF'):
-                                pdf_base64 = base64.b64encode(payload_bytes).decode('utf-8')
-                                nombre_pdf = filename or "reporte_kizeo.pdf"
-                    except Exception:
-                        pass
-
                     if content_type == "text/plain" and not cuerpo_texto:
                         try:
                             payload = part_m.get_payload(decode=True)
@@ -305,75 +288,54 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     continue
 
                 uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}-{fecha_correo_str}"
-                tiene_pdf_bool = bool(pdf_base64)
+                if uid_unico in ids_existentes:
+                    continue
 
                 if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
 
-                    rep_existente = ReporteKizeo.query.filter_by(form_id=uid_unico).first()
-                    if rep_existente:
-                        if not json.loads(rep_existente.datos_json or '{}').get('tiene_pdf') and tiene_pdf_bool:
-                            rep_existente.datos_json = json.dumps({
-                                "tipo": "NOVEDAD",
-                                "instalacion": nombre_inst,
-                                "asunto": asunto,
-                                "cuerpo": cuerpo_texto[:2500],
-                                "tiene_pdf": tiene_pdf_bool,
-                                "pdf_base64": pdf_base64,
-                                "nombre_pdf": nombre_pdf,
-                                "remitente": nombre_remitente,
-                                "turno_codigo": turno_cod_correo,
-                                "turno_etiqueta": turno_label_correo
-                            }, ensure_ascii=False)
-                    else:
+                    nuevo_rep = ReporteKizeo(
+                        form_id=uid_unico,
+                        usuario=f"⚠️ ALERTA ({nombre_inst})",
+                        fecha_envio=fecha_correo_str,
+                        datos_json=json.dumps({
+                            "tipo": "NOVEDAD",
+                            "instalacion": nombre_inst,
+                            "asunto": asunto,
+                            "cuerpo": cuerpo_texto[:3000],
+                            "remitente": nombre_remitente,
+                            "turno_codigo": turno_cod_correo,
+                            "turno_etiqueta": turno_label_correo
+                        }, ensure_ascii=False)
+                    )
+                    db.session.add(nuevo_rep)
+                    ids_existentes.add(uid_unico)
+                    procesados += 1
+
+                elif "ronda" in asunto_limpio:
+                    inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
+                    if inst_obj:
+                        if turno_cod_correo == codigo_turno_actual:
+                            inst_obj.rondas += 1
+
                         nuevo_rep = ReporteKizeo(
                             form_id=uid_unico,
-                            usuario=f"⚠️ ALERTA ({nombre_inst})",
+                            usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
                             fecha_envio=fecha_correo_str,
                             datos_json=json.dumps({
-                                "tipo": "NOVEDAD",
-                                "instalacion": nombre_inst,
+                                "tipo": "RONDA",
+                                "instalacion": inst_obj.nombre,
                                 "asunto": asunto,
-                                "cuerpo": cuerpo_texto[:2500],
-                                "tiene_pdf": tiene_pdf_bool,
-                                "pdf_base64": pdf_base64,
-                                "nombre_pdf": nombre_pdf,
+                                "cuerpo": cuerpo_texto[:3000],
                                 "remitente": nombre_remitente,
                                 "turno_codigo": turno_cod_correo,
                                 "turno_etiqueta": turno_label_correo
                             }, ensure_ascii=False)
                         )
                         db.session.add(nuevo_rep)
+                        ids_existentes.add(uid_unico)
                         procesados += 1
-
-                elif "ronda" in asunto_limpio:
-                    inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
-                    if inst_obj:
-                        if turno_cod_correo == codigo_turno_actual and not ReporteKizeo.query.filter_by(form_id=uid_unico).first():
-                            inst_obj.rondas += 1
-
-                        rep_existente = ReporteKizeo.query.filter_by(form_id=uid_unico).first()
-                        if not rep_existente:
-                            nuevo_rep = ReporteKizeo(
-                                form_id=uid_unico,
-                                usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
-                                fecha_envio=fecha_correo_str,
-                                datos_json=json.dumps({
-                                    "tipo": "RONDA",
-                                    "instalacion": inst_obj.nombre,
-                                    "asunto": asunto,
-                                    "cuerpo": cuerpo_texto[:2500],
-                                    "tiene_pdf": tiene_pdf_bool,
-                                    "pdf_base64": pdf_base64,
-                                    "nombre_pdf": nombre_pdf,
-                                    "remitente": nombre_remitente,
-                                    "turno_codigo": turno_cod_correo,
-                                    "turno_etiqueta": turno_label_correo
-                                }, ensure_ascii=False)
-                            )
-                            db.session.add(nuevo_rep)
-                            procesados += 1
 
         db.session.commit()
         recalcular_contadores_turno_actual()
@@ -566,8 +528,6 @@ def obtener_detalle_reporte(reporte_id):
             return jsonify({"error": "Reporte no encontrado"}), 404
         
         detalles = json.loads(rep.datos_json or '{}')
-        tiene_pdf = bool(detalles.get('tiene_pdf') and detalles.get('pdf_base64'))
-        
         return jsonify({
             "id": rep.id,
             "usuario": rep.usuario,
@@ -576,31 +536,10 @@ def obtener_detalle_reporte(reporte_id):
             "cuerpo": detalles.get('cuerpo', 'Sin contenido en el cuerpo del mensaje.'),
             "remitente": detalles.get('remitente', 'Desconocido'),
             "instalacion": detalles.get('instalacion', 'General'),
-            "tiene_pdf": tiene_pdf,
-            "nombre_pdf": detalles.get('nombre_pdf', 'reporte.pdf'),
             "tipo": detalles.get('tipo', 'INFORME')
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-@app.route('/api/ver-pdf/<int:reporte_id>')
-def servir_pdf_dinamico(reporte_id):
-    if 'operador_id' not in session:
-        return "No autorizado", 401
-    try:
-        rep = ReporteKizeo.query.get(reporte_id)
-        if not rep:
-            return "Reporte no encontrado", 404
-        
-        detalles = json.loads(rep.datos_json or '{}')
-        pdf_b64 = detalles.get('pdf_base64', '')
-        if not pdf_b64:
-            return "Este reporte no incluye un archivo PDF adjunto.", 404
-        
-        pdf_bytes = base64.b64decode(pdf_b64)
-        return Response(pdf_bytes, mimetype='application/pdf')
-    except Exception as e:
-        return f"Error al procesar el PDF: {str(e)}", 500
 
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
@@ -671,9 +610,6 @@ def recibir_webhook():
                         "instalacion": nombre_inst,
                         "asunto": form_name,
                         "cuerpo": json.dumps(content, ensure_ascii=False),
-                        "tiene_pdf": False,
-                        "pdf_base64": "",
-                        "nombre_pdf": "",
                         "remitente": usuario,
                         "turno_codigo": turno_cod,
                         "turno_etiqueta": turno_label
@@ -694,9 +630,6 @@ def recibir_webhook():
                         "instalacion": nombre_inst,
                         "asunto": form_name,
                         "cuerpo": json.dumps(content, ensure_ascii=False),
-                        "tiene_pdf": False,
-                        "pdf_base64": "",
-                        "nombre_pdf": "",
                         "remitente": usuario,
                         "turno_codigo": turno_cod,
                         "turno_etiqueta": turno_label

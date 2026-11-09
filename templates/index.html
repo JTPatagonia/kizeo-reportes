@@ -230,12 +230,12 @@
         </div>
     </div>
 
-    <!-- MODAL VISOR DE CORREO Y PDF (Abre en pestaña nueva) -->
+    <!-- MODAL DETALLE DE ALERTA -->
     <div class="modal fade" id="modalDetalleCorreo" tabindex="-1">
         <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content bg-dark text-light border border-secondary shadow-lg">
                 <div class="modal-header border-secondary bg-black">
-                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-file-pdf text-danger me-2"></i> Detalle de la Alerta y Reporte</h5>
+                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-triangle-exclamation text-danger me-2"></i> Detalle del Reporte / Alerta</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body" style="background-color: #181818;">
@@ -244,16 +244,8 @@
                         <div class="small text-warning mb-1"><strong class="text-light">Fecha:</strong> <span id="correo-fecha">-</span></div>
                         <div class="small text-warning"><strong class="text-light">Asunto:</strong> <span id="correo-asunto" class="fw-bold text-light">-</span></div>
                     </div>
-                    <label class="form-label small text-secondary fw-semibold">Resumen del Mensaje:</label>
-                    <div id="correo-cuerpo" class="p-3 rounded border border-secondary bg-dark text-light mb-3" style="max-height: 200px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px;">Cargando...</div>
-
-                    <div id="contenedor-alerta-pdf" class="alert alert-secondary py-3 text-center d-none m-0">
-                        <i class="fa-solid fa-file-pdf text-danger fa-2x mb-2"></i>
-                        <p class="small text-light mb-2">Este reporte contiene el informe oficial en PDF generado por Kizeo.</p>
-                        <a id="enlace-abrir-pdf" href="#" target="_blank" class="btn btn-danger btn-sm fw-bold px-4">
-                            <i class="fa-solid fa-external-link-alt me-1"></i> Abrir y Revisar PDF Completo
-                        </a>
-                    </div>
+                    <label class="form-label small text-secondary fw-semibold">Contenido del Reporte:</label>
+                    <div id="correo-cuerpo" class="p-3 rounded border border-secondary bg-dark text-light" style="max-height: 300px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px;">Cargando...</div>
                 </div>
                 <div class="modal-footer border-secondary bg-black">
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
@@ -308,7 +300,6 @@
         let ultimaAlertaIdConocida = null;
         let ultimaRondaIdConocida = null;
 
-        // Inicializar mapa de forma segura
         const map = L.map('map').setView([-33.4489, -70.6693], 10);
         L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
 
@@ -316,7 +307,6 @@
         const API_URL = "/api/estado-instalaciones";
         const HISTORIAL_URL = "/api/historial-rondas";
 
-        // Forzar recarga del tamaño del mapa tras renderizar
         setTimeout(() => { map.invalidateSize(); }, 300);
 
         setInterval(() => {
@@ -410,7 +400,6 @@
             document.getElementById('correo-fecha').innerText = "Cargando...";
             document.getElementById('correo-asunto').innerText = "Cargando...";
             document.getElementById('correo-cuerpo').innerText = "Obteniendo datos...";
-            document.getElementById('contenedor-alerta-pdf').classList.add('d-none');
 
             try {
                 const res = await fetch(`/api/detalle-reporte/${reporteId}`);
@@ -420,13 +409,6 @@
                     document.getElementById('correo-fecha').innerText = data.fecha_envio;
                     document.getElementById('correo-asunto').innerText = data.asunto;
                     document.getElementById('correo-cuerpo').innerText = data.cuerpo;
-
-                    if (data.tiene_pdf) {
-                        const pdfUrl = `/api/ver-pdf/${reporteId}`;
-                        const enlacePdf = document.getElementById('enlace-abrir-pdf');
-                        enlacePdf.href = pdfUrl;
-                        document.getElementById('contenedor-alerta-pdf').classList.remove('d-none');
-                    }
                 } else {
                     document.getElementById('correo-cuerpo').innerText = "Error al cargar el reporte.";
                 }
@@ -654,9 +636,9 @@
                             const ab = instNovAbiertas.has(clave);
                             let filas = '';
                             lista.forEach(n => { 
-                                filas += `<tr onclick="verDetalleReporte(${n.id})" title="Haz clic para ver el PDF de la alerta" style="cursor: pointer;">
+                                filas += `<tr onclick="verDetalleReporte(${n.id})" title="Haz clic para ver el detalle" style="cursor: pointer;">
                                     <td><small class="text-warning">${n.fecha_envio}</small></td>
-                                    <td><small class="text-light fw-bold"><i class="fa-solid fa-file-pdf text-danger me-1"></i> ${n.asunto}</small></td>
+                                    <td><small class="text-light fw-bold"><i class="fa-solid fa-triangle-exclamation text-danger me-1"></i> ${n.asunto}</small></td>
                                 </tr>`; 
                             });
                             subHTML += `
@@ -750,7 +732,6 @@
             cargarDatosEnVivo();
         }
 
-        // Carga inicial automática inmediata al arrancar la página
         cargarDatosEnVivo();
         cargarHistorial();
         forzarVerificacion();
