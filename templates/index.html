@@ -77,7 +77,6 @@
         .form-control { background-color: #2a2a2a; border: 1px solid #444; color: #fff; }
         .form-control:focus { background-color: #2a2a2a; border-color: #0d6efd; color: #fff; box-shadow: none; }
         
-        /* Estilo para las sugerencias del buscador de Google Maps */
         .pac-container { background-color: #1e1e1e !important; color: #fff !important; border: 1px solid #444 !important; z-index: 99999 !important; font-family: 'Inter', sans-serif; }
         .pac-item { color: #ccc !important; border-top: 1px solid #333 !important; padding: 8px !important; cursor: pointer; }
         .pac-item:hover { background-color: #2a2a2a !important; color: #fff !important; }
@@ -135,7 +134,6 @@
                         </div>
                     </div>
                     
-                    <!-- BARRA DE BÚSQUEDA DE GOOGLE MAPS -->
                     <div class="mb-2">
                         <div class="input-group input-group-sm">
                             <span class="input-group-text bg-dark border-secondary text-info"><i class="fa-solid fa-magnifying-glass"></i></span>
@@ -301,8 +299,8 @@
     </div>
     {% endif %}
 
-    <!-- Script de Google Maps API (Requiere tu Google Maps API Key con Places y Maps habilitados) -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD...&libraries=places"></script>
+    <!-- Google Maps API con tu Demo Key -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDKG4JIOB5-URoH0IcOhZrs0GuwTj_d8Q&libraries=places"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         let segundosParaSync = 15;
@@ -336,7 +334,6 @@
                 ]
             });
 
-            // Configurar barra de búsqueda con Autocompletado de Google Maps
             const inputBuscador = document.getElementById("buscador-direccion");
             const autocomplete = new google.maps.places.Autocomplete(inputBuscador);
             autocomplete.bindTo("bounds", map);
@@ -355,7 +352,6 @@
                     map.setZoom(15);
                 }
 
-                // Mostrar una alerta con las coordenadas obtenidas para que sepas qué guardar en tu DB
                 const lat = place.geometry.location.lat();
                 const lng = place.geometry.location.lng();
                 console.log("Dirección seleccionada:", place.formatted_address, "Lat:", lat, "Lng:", lng);
@@ -521,7 +517,6 @@
                 if (response.status === 401) { window.location.href = '/login'; return; }
                 const instalaciones = await response.json();
                 
-                // Limpiar marcadores anteriores
                 markersGoogle.forEach(m => m.setMap(null));
                 markersGoogle = [];
 
@@ -620,7 +615,7 @@
                 contenedorTurnos.innerHTML = ''; contenedorNovedadesTurnos.innerHTML = '';
 
                 let countNovedades = 0;
-                const gruposTurnos = {}, ordenTurnos = [], gruposNovedadesTurnos = {}, ordenNovedadesTurnos = [];
+                const gruposTurnos = {}, ordenTurnos = [], gruposNovedadesTurnos = [], ordenNovedadesTurnos = [];
                 let codigoActualGlobal = null, etiquetaActualGlobal = null;
                 let nuevaAlertaDetectada = false, nuevaRondaDetectada = false;
 
@@ -692,7 +687,6 @@
                     primerRenderTurnos = false;
                 }
 
-                // Render Novedades
                 if (ordenNovedadesTurnos.length === 0 || countNovedades === 0) {
                     contenedorNovedadesTurnos.innerHTML = `<div class="text-center text-muted py-4">Sin novedades ni alertas registradas.</div>`;
                 } else {
@@ -738,7 +732,6 @@
                     });
                 }
 
-                // Render Rondas
                 ordenTurnos.forEach(cod => {
                     const g = gruposTurnos[cod];
                     const abierto = turnosAbiertos.has(cod);
@@ -823,7 +816,6 @@
             } catch(e) {}
         }
 
-        // Inicializar Google Maps al cargar la página
         window.onload = initMap;
     </script>
 </body>
