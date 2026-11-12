@@ -554,6 +554,9 @@ def obtener_detalle_reporte(reporte_id):
             return jsonify({"error": "Reporte no encontrado"}), 404
         
         detalles = json.loads(rep.datos_json or '{}')
+        nombre_pdf = detalles.get('nombre_pdf', '')
+        url_pdf = f"/ver-pdf/{nombre_pdf}" if detalles.get('tiene_pdf') and nombre_pdf else ""
+
         return jsonify({
             "id": rep.id,
             "usuario": rep.usuario,
@@ -562,8 +565,8 @@ def obtener_detalle_reporte(reporte_id):
             "cuerpo": detalles.get('cuerpo', 'Sin contenido en el cuerpo del mensaje.'),
             "remitente": detalles.get('remitente', 'Desconocido'),
             "instalacion": detalles.get('instalacion', 'General'),
-            "tiene_pdf": detalles.get('tiene_pdf', False),
-            "url_pdf": f"/ver-pdf/{detalles.get('nombre_pdf')}" if detalles.get('tiene_pdf') and detalles.get('nombre_pdf') else "",
+            "tiene_pdf": bool(detalles.get('tiene_pdf') and nombre_pdf),
+            "url_pdf": url_pdf,
             "tipo": detalles.get('tipo', 'INFORME')
         }), 200
     except Exception as e:
@@ -573,7 +576,21 @@ def obtener_detalle_reporte(reporte_id):
 def ver_pdf(filename):
     if 'operador_id' not in session:
         return redirect(url_for('login'))
-    return send_from_directory(PDF_FOLDER, filename)
+    
+    safe_path = os.path.join(PDF_FOLDER, filename)
+    if os.path.exists(safe_path):
+        return send_from_directory(PDF_FOLDER, filename)
+    
+    try:
+        archivos = os.listdir(PDF_FOLDER)
+        pdf_files = [f for f in archivos if f.endswith('.pdf')]
+        if pdf_files:
+            pdf_files.sort(key=lambda x: os.path.getmtime(os.path.join(PDF_FOLDER, x)), reverse=True)
+            return send_from_directory(PDF_FOLDER, pdf_files[0])
+    except Exception:
+        pass
+        
+    return "El archivo PDF no se encuentra disponible en el servidor.", 404
 
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
