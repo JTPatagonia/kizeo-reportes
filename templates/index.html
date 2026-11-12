@@ -230,12 +230,12 @@
         </div>
     </div>
 
-    <!-- MODAL DETALLE DE ALERTA -->
+    <!-- MODAL DETALLE DE ALERTA Y ACCESO AL PDF -->
     <div class="modal fade" id="modalDetalleCorreo" tabindex="-1">
         <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content bg-dark text-light border border-secondary shadow-lg">
                 <div class="modal-header border-secondary bg-black">
-                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-triangle-exclamation text-danger me-2"></i> Detalle del Reporte / Alerta</h5>
+                    <h5 class="modal-title fw-bold text-info"><i class="fa-solid fa-triangle-exclamation text-danger me-2"></i> Detalle de Alerta e Informe Kizeo</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body" style="background-color: #181818;">
@@ -245,7 +245,15 @@
                         <div class="small text-warning"><strong class="text-light">Asunto:</strong> <span id="correo-asunto" class="fw-bold text-light">-</span></div>
                     </div>
                     <label class="form-label small text-secondary fw-semibold">Contenido del Reporte:</label>
-                    <div id="correo-cuerpo" class="p-3 rounded border border-secondary bg-dark text-light" style="max-height: 300px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px;">Cargando...</div>
+                    <div id="correo-cuerpo" class="p-3 rounded border border-secondary bg-dark text-light mb-3" style="max-height: 180px; overflow-y: auto; white-space: pre-wrap; font-family: monospace; font-size: 12px;">Cargando...</div>
+
+                    <div id="contenedor-alerta-pdf" class="alert alert-dark border border-danger py-3 text-center d-none m-0">
+                        <i class="fa-solid fa-file-pdf text-danger fa-2x mb-2"></i>
+                        <p class="small text-light mb-2">Informe oficial en PDF adjunto (con firmas, fotos y códigos QR).</p>
+                        <a id="enlace-abrir-pdf" href="#" target="_blank" class="btn btn-danger btn-sm fw-bold px-4">
+                            <i class="fa-solid fa-external-link-alt me-1"></i> Abrir PDF Adjunto
+                        </a>
+                    </div>
                 </div>
                 <div class="modal-footer border-secondary bg-black">
                     <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cerrar</button>
@@ -400,6 +408,7 @@
             document.getElementById('correo-fecha').innerText = "Cargando...";
             document.getElementById('correo-asunto').innerText = "Cargando...";
             document.getElementById('correo-cuerpo').innerText = "Obteniendo datos...";
+            document.getElementById('contenedor-alerta-pdf').classList.add('d-none');
 
             try {
                 const res = await fetch(`/api/detalle-reporte/${reporteId}`);
@@ -409,6 +418,12 @@
                     document.getElementById('correo-fecha').innerText = data.fecha_envio;
                     document.getElementById('correo-asunto').innerText = data.asunto;
                     document.getElementById('correo-cuerpo').innerText = data.cuerpo;
+
+                    if (data.tiene_pdf && data.url_pdf) {
+                        const enlacePdf = document.getElementById('enlace-abrir-pdf');
+                        enlacePdf.href = data.url_pdf;
+                        document.getElementById('contenedor-alerta-pdf').classList.remove('d-none');
+                    }
                 } else {
                     document.getElementById('correo-cuerpo').innerText = "Error al cargar el reporte.";
                 }
@@ -588,7 +603,7 @@
                         gruposNovedadesTurnos[tCodigo].novedades.push({ id: h.id, fecha_envio: h.fecha_envio, instalacion: nombreInstNov || 'GENERAL', asunto: objDetalle.asunto || h.detalles });
                     } else {
                         if (ultimaRondaIdConocida !== null && h.id > ultimaRondaIdConocida) nuevaRondaDetectada = true;
-                        if (ultimaRondaIdConocida === null || h.id > ultimaRondaIdConocida) ultimaRondaIdConocida = h.id;
+                        if (ultimaRondaIdConocida === null || h.id > ultimaRondaIdConocida) ultimaRondIdConocida = h.id;
 
                         if (!gruposTurnos[tCodigo]) {
                             gruposTurnos[tCodigo] = { codigo: tCodigo, etiqueta: tEtiqueta, esActual: (tCodigo === codigoActualGlobal), rondas: [] };
@@ -636,9 +651,9 @@
                             const ab = instNovAbiertas.has(clave);
                             let filas = '';
                             lista.forEach(n => { 
-                                filas += `<tr onclick="verDetalleReporte(${n.id})" title="Haz clic para ver el detalle" style="cursor: pointer;">
+                                filas += `<tr onclick="verDetalleReporte(${n.id})" title="Haz clic para ver el detalle y PDF" style="cursor: pointer;">
                                     <td><small class="text-warning">${n.fecha_envio}</small></td>
-                                    <td><small class="text-light fw-bold"><i class="fa-solid fa-triangle-exclamation text-danger me-1"></i> ${n.asunto}</small></td>
+                                    <td><small class="text-light fw-bold"><i class="fa-solid fa-file-pdf text-danger me-1"></i> ${n.asunto}</small></td>
                                 </tr>`; 
                             });
                             subHTML += `

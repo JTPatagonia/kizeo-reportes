@@ -9,7 +9,7 @@ import re
 import unicodedata
 from datetime import datetime, timedelta
 import pytz
-from flask import Flask, request, jsonify, render_template, session, redirect, url_for
+from flask import Flask, request, jsonify, render_template, session, redirect, url_for, send_from_directory
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import db, ReporteKizeo
@@ -17,6 +17,9 @@ from database import db, ReporteKizeo
 app = Flask(__name__)
 CORS(app)
 app.secret_key = os.getenv('SECRET_KEY', 'central_monitoreo_secreto_2026')
+
+PDF_FOLDER = os.path.join(os.getcwd(), 'static', 'pdf_adjuntos')
+os.makedirs(PDF_FOLDER, exist_ok=True)
 
 database_url = os.getenv('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
@@ -266,8 +269,27 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
                 cuerpo_texto = ""
+                tiene_pdf = False
+                nombre_pdf_guardado = ""
+
                 for part_m in msg.walk():
                     content_type = part_m.get_content_type()
+                    filename = part_m.get_filename()
+                    if filename:
+                        filename = decodificar_encabezado(filename)
+
+                    try:
+                        payload_bytes = part_m.get_payload(decode=True)
+                        if payload_bytes and payload_bytes.startswith(b'%PDF'):
+                            tiene_pdf = True
+                            safe_filename = f"{int(time.time())}_{re.sub(r'[^a-zA-Z0-9_-]', '_', filename or 'reporte.pdf')}"
+                            pdf_path = os.path.join(PDF_FOLDER, safe_filename)
+                            with open(pdf_path, "wb") as f_pdf:
+                                f_pdf.write(payload_bytes)
+                            nombre_pdf_guardado = safe_filename
+                    except Exception:
+                        pass
+
                     if content_type == "text/plain" and not cuerpo_texto:
                         try:
                             payload = part_m.get_payload(decode=True)
@@ -304,6 +326,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             "instalacion": nombre_inst,
                             "asunto": asunto,
                             "cuerpo": cuerpo_texto[:3000],
+                            "tiene_pdf": tiene_pdf,
+                            "nombre_pdf": nombre_pdf_guardado,
                             "remitente": nombre_remitente,
                             "turno_codigo": turno_cod_correo,
                             "turno_etiqueta": turno_label_correo
@@ -328,6 +352,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                                 "instalacion": inst_obj.nombre,
                                 "asunto": asunto,
                                 "cuerpo": cuerpo_texto[:3000],
+                                "tiene_pdf": tiene_pdf,
+                                "nombre_pdf": nombre_pdf_guardado,
                                 "remitente": nombre_remitente,
                                 "turno_codigo": turno_cod_correo,
                                 "turno_etiqueta": turno_label_correo
@@ -536,10 +562,18 @@ def obtener_detalle_reporte(reporte_id):
             "cuerpo": detalles.get('cuerpo', 'Sin contenido en el cuerpo del mensaje.'),
             "remitente": detalles.get('remitente', 'Desconocido'),
             "instalacion": detalles.get('instalacion', 'General'),
+            "tiene_pdf": detalles.get('tiene_pdf', False),
+            "url_pdf": f"/ver-pdf/{detalles.get('nombre_pdf')}" if detalles.get('tiene_pdf') and detalles.get('nombre_pdf') else "",
             "tipo": detalles.get('tipo', 'INFORME')
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/ver-pdf/<path:filename>')
+def ver_pdf(filename):
+    if 'operador_id' not in session:
+        return redirect(url_for('login'))
+    return send_from_directory(PDF_FOLDER, filename)
 
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
@@ -610,6 +644,8 @@ def recibir_webhook():
                         "instalacion": nombre_inst,
                         "asunto": form_name,
                         "cuerpo": json.dumps(content, ensure_ascii=False),
+                        "tiene_pdf": False,
+                        "nombre_pdf": "",
                         "remitente": usuario,
                         "turno_codigo": turno_cod,
                         "turno_etiqueta": turno_label
@@ -630,6 +666,8 @@ def recibir_webhook():
                         "instalacion": nombre_inst,
                         "asunto": form_name,
                         "cuerpo": json.dumps(content, ensure_ascii=False),
+                        "tiene_pdf": False,
+                        "nombre_pdf": "",
                         "remitente": usuario,
                         "turno_codigo": turno_cod,
                         "turno_etiqueta": turno_label
