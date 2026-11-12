@@ -267,7 +267,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
                 cuerpo_texto = ""
-                tiene_pdf = False
+                pdf_base64 = ""
+                nombre_pdf = ""
 
                 for part_m in msg.walk():
                     content_type = part_m.get_content_type()
@@ -278,7 +279,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     try:
                         payload_bytes = part_m.get_payload(decode=True)
                         if payload_bytes and (payload_bytes.startswith(b'%PDF') or (filename and filename.lower().endswith('.pdf'))):
-                            tiene_pdf = True
+                            pdf_base64 = base64.b64encode(payload_bytes).decode('utf-8')
+                            nombre_pdf = filename or "reporte_kizeo.pdf"
                     except Exception:
                         pass
 
@@ -305,6 +307,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 if uid_unico in ids_existentes:
                     continue
 
+                tiene_pdf_bool = bool(pdf_base64)
+
                 if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
@@ -318,8 +322,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             "instalacion": nombre_inst,
                             "asunto": asunto,
                             "cuerpo": cuerpo_texto[:3000],
-                            "tiene_pdf": tiene_pdf,
-                            "msg_id": uid_unico,
+                            "tiene_pdf": tiene_pdf_bool,
+                            "pdf_base64": pdf_base64,
+                            "nombre_pdf": nombre_pdf,
                             "remitente": nombre_remitente,
                             "turno_codigo": turno_cod_correo,
                             "turno_etiqueta": turno_label_correo
@@ -344,8 +349,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                                 "instalacion": inst_obj.nombre,
                                 "asunto": asunto,
                                 "cuerpo": cuerpo_texto[:3000],
-                                "tiene_pdf": tiene_pdf,
-                                "msg_id": uid_unico,
+                                "tiene_pdf": tiene_pdf_bool,
+                                "pdf_base64": pdf_base64,
+                                "nombre_pdf": nombre_pdf,
                                 "remitente": nombre_remitente,
                                 "turno_codigo": turno_cod_correo,
                                 "turno_etiqueta": turno_label_correo
@@ -546,6 +552,8 @@ def obtener_detalle_reporte(reporte_id):
             return jsonify({"error": "Reporte no encontrado"}), 404
         
         detalles = json.loads(rep.datos_json or '{}')
+        tiene_pdf = bool(detalles.get('tiene_pdf') and detalles.get('pdf_base64'))
+
         return jsonify({
             "id": rep.id,
             "usuario": rep.usuario,
@@ -554,93 +562,34 @@ def obtener_detalle_reporte(reporte_id):
             "cuerpo": detalles.get('cuerpo', 'Sin contenido en el cuerpo del mensaje.'),
             "remitente": detalles.get('remitente', 'Desconocido'),
             "instalacion": detalles.get('instalacion', 'General'),
-            "tiene_pdf": detalles.get('tiene_pdf', False),
-            "url_pdf": f"/ver-pdf/{rep.id}",
+            "tiene_pdf": tiene_pdf,
+            "url_pdf": f"/ver-pdf/{rep.id}" if tiene_pdf else "",
             "tipo": detalles.get('tipo', 'INFORME')
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Ruta inteligente que busca el correo en Gmail al vuelo y extrae el PDF directamente
+# Ruta para servir el PDF instantáneamente desde la base de datos (con 2 GB de RAM vuela)
 @app.route('/ver-pdf/<int:reporte_id>')
 def ver_pdf_dinamico(reporte_id):
     if 'operador_id' not in session:
         return redirect(url_for('login'))
-    
-    rep = ReporteKizeo.query.get(reporte_id)
-    if not rep:
-        return "Reporte no encontrado", 404
-
-    detalles = json.loads(rep.datos_json or '{}')
-    form_id = detalles.get('msg_id')
-
-    mail = None
     try:
-        mail_server = os.getenv('MAIL_SERVER', 'imap.gmail.com')
-        mail_user = os.getenv('MAIL_USER')
-        mail_password = os.getenv('MAIL_PASSWORD')
+        rep = ReporteKizeo.query.get(reporte_id)
+        if not rep:
+            return "Reporte no encontrado", 404
+        
+        detalles = json.loads(rep.datos_json or '{}')
+        pdf_b64 = detalles.get('pdf_base64', '')
+        nombre_pdf = detalles.get('nombre_pdf', 'reporte_kizeo.pdf')
 
-        mail = imaplib.IMAP4_SSL(mail_server, timeout=15)
-        mail.login(mail_user, mail_password)
-        mail.select('INBOX', readonly=True)
-
-        status, messages = mail.search(None, 'ALL')
-        if status != 'OK':
-            mail.logout()
-            return "No se pudo acceder a la bandeja de correo.", 500
-
-        email_ids = messages[0].split()
-        target_msg = None
-
-        # Buscar el correo exacto por su ID de mensaje o revisar los últimos correos
-        for e_id in reversed(email_ids[-60:]):
-            res, msg_data = mail.fetch(e_id, '(RFC822)')
-            if res == 'OK':
-                msg = email.message_from_bytes(msg_data[0][1])
-                m_id = (msg.get('Message-ID') or '').strip()
-                if form_id and m_id == form_id:
-                    target_msg = msg
-                    break
-                elif not form_id:
-                    # Coincidencia por asunto si no hay Message-ID
-                    subj = decodificar_encabezado(msg.get('Subject', ''))
-                    if subj == detalles.get('asunto'):
-                        target_msg = msg
-                        break
-
-        if not target_msg:
-            mail.logout()
-            return "El correo asociado a este reporte ya no está disponible en la bandeja.", 404
-
-        # Extraer el archivo PDF del correo encontrado
-        pdf_bytes = None
-        pdf_filename = "reporte_kizeo.pdf"
-
-        for part in target_msg.walk():
-            filename = part.get_filename()
-            if filename:
-                filename = decodificar_encabezado(filename)
-            payload = part.get_payload(decode=True)
-            if payload and (payload.startswith(b'%PDF') or (filename and filename.lower().endswith('.pdf'))):
-                pdf_bytes = payload
-                if filename:
-                    pdf_filename = filename
-                break
-
-        mail.logout()
-
-        if pdf_bytes:
-            return Response(pdf_bytes, mimetype='application/pdf', headers={"Content-Disposition": f"inline; filename={pdf_filename}"})
-        else:
-            return "El correo seleccionado no contiene ningún archivo PDF adjunto.", 404
-
+        if not pdf_b64:
+            return "Este reporte no incluye un archivo PDF adjunto.", 404
+        
+        pdf_bytes = base64.b64decode(pdf_b64)
+        return Response(pdf_bytes, mimetype='application/pdf', headers={"Content-Disposition": f"inline; filename={nombre_pdf}"})
     except Exception as e:
-        if mail:
-            try:
-                mail.logout()
-            except Exception:
-                pass
-        return f"Error al extraer el PDF del correo: {str(e)}", 500
+        return f"Error al renderizar el PDF: {str(e)}", 500
 
 @app.route('/api/actualizar-meta', methods=['POST'])
 def actualizar_meta():
@@ -712,7 +661,8 @@ def recibir_webhook():
                         "asunto": form_name,
                         "cuerpo": json.dumps(content, ensure_ascii=False),
                         "tiene_pdf": False,
-                        "msg_id": "",
+                        "pdf_base64": "",
+                        "nombre_pdf": "",
                         "remitente": usuario,
                         "turno_codigo": turno_cod,
                         "turno_etiqueta": turno_label
@@ -734,7 +684,8 @@ def recibir_webhook():
                         "asunto": form_name,
                         "cuerpo": json.dumps(content, ensure_ascii=False),
                         "tiene_pdf": False,
-                        "msg_id": "",
+                        "pdf_base64": "",
+                        "nombre_pdf": "",
                         "remitente": usuario,
                         "turno_codigo": turno_cod,
                         "turno_etiqueta": turno_label
@@ -745,9 +696,9 @@ def recibir_webhook():
 
         return jsonify({"status": "success"}), 200
 
-    except Exception as e:
+    except Exception as int_err:
         db.session.rollback()
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": str(int_err)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
