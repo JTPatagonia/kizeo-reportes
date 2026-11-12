@@ -603,7 +603,7 @@
                         gruposNovedadesTurnos[tCodigo].novedades.push({ id: h.id, fecha_envio: h.fecha_envio, instalacion: nombreInstNov || 'GENERAL', asunto: objDetalle.asunto || h.detalles });
                     } else {
                         if (ultimaRondaIdConocida !== null && h.id > ultimaRondaIdConocida) nuevaRondaDetectada = true;
-                        if (ultimaRondaIdConocida === null || h.id > ultimaRondaIdConocida) ultimaRondIdConocida = h.id;
+                        if (ultimaRondaIdConocida === null || h.id > ultimaRondaIdConocida) ultimaRondaIdConocida = h.id;
 
                         if (!gruposTurnos[tCodigo]) {
                             gruposTurnos[tCodigo] = { codigo: tCodigo, etiqueta: tEtiqueta, esActual: (tCodigo === codigoActualGlobal), rondas: [] };
