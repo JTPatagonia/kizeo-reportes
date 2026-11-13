@@ -88,12 +88,18 @@ with app.app_context():
             { "nombre": "RONDA - ICESTAR QUILICURA", "comuna": "Quilicura", "lat": -33.3666, "lng": -70.7333, "rondas": 0, "meta_rondas": 3 },
             { "nombre": "RONDA - MEGAFRIO RENCA", "comuna": "Renca", "lat": -33.4034, "lng": -70.7185, "rondas": 0, "meta_rondas": 3 },
             { "nombre": "RONDA - UNIPACK", "comuna": "Conchalí", "lat": -33.3800, "lng": -70.6700, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA PRUEBA FINAL", "comuna": "Huechuraba", "lat": -33.3700, "lng": -70.6300, "rondas": 0, "meta_rondas": 3 }
+            { "nombre": "RONDA - ARAMARK ATACAMA", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "rondas": 0, "meta_rondas": 3 }
         ]
         for data in iniciales:
             inst = InstalacionDB(**data)
             db.session.add(inst)
         db.session.commit()
+    else:
+        # Actualizar automáticamente si ya existía en la BD con el nombre antiguo
+        inst_prueba = InstalacionDB.query.filter_by(nombre="RONDA PRUEBA FINAL").first()
+        if inst_prueba:
+            inst_prueba.nombre = "RONDA - ARAMARK ATACAMA"
+            db.session.commit()
 
 def limpiar_texto(texto):
     if not texto:
@@ -569,7 +575,6 @@ def obtener_detalle_reporte(reporte_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# Ruta para servir el PDF instantáneamente desde la base de datos (con 2 GB de RAM vuela)
 @app.route('/ver-pdf/<int:reporte_id>')
 def ver_pdf_dinamico(reporte_id):
     if 'operador_id' not in session:
