@@ -80,6 +80,8 @@ with app.app_context():
     if InstalacionDB.query.count() == 0:
         iniciales = [
             { "nombre": "RONDA - ARAMARK ACONCAGUA", "comuna": "Colina", "lat": -33.2000, "lng": -70.6700, "rondas": 0, "meta_rondas": 3 },
+            { "nombre": "RONDA - ARAMARK ALPES", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "rondas": 0, "meta_rondas": 3 },
+            { "nombre": "RONDA - ARAMARK ATACAMA", "comuna": "Santiago", "lat": -33.4500, "lng": -70.6750, "rondas": 0, "meta_rondas": 3 },
             { "nombre": "RONDA - ARAMARK CONCEPCION", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "rondas": 0, "meta_rondas": 3 },
             { "nombre": "RONDA - DESCO", "comuna": "Pudahuel", "lat": -33.4312, "lng": -70.8012, "rondas": 0, "meta_rondas": 3 },
             { "nombre": "RONDA - DITALCAR", "comuna": "Maipú", "lat": -33.5100, "lng": -70.7500, "rondas": 0, "meta_rondas": 3 },
@@ -87,18 +89,22 @@ with app.app_context():
             { "nombre": "RONDA - ICESTAR PUDAHUEL", "comuna": "Pudahuel", "lat": -33.4111, "lng": -70.7922, "rondas": 0, "meta_rondas": 3 },
             { "nombre": "RONDA - ICESTAR QUILICURA", "comuna": "Quilicura", "lat": -33.3666, "lng": -70.7333, "rondas": 0, "meta_rondas": 3 },
             { "nombre": "RONDA - MEGAFRIO RENCA", "comuna": "Renca", "lat": -33.4034, "lng": -70.7185, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - UNIPACK", "comuna": "Conchalí", "lat": -33.3800, "lng": -70.6700, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - ARAMARK ATACAMA", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "rondas": 0, "meta_rondas": 3 }
+            { "nombre": "RONDA - UNIPACK", "comuna": "Conchalí", "lat": -33.3800, "lng": -70.6700, "rondas": 0, "meta_rondas": 3 }
         ]
         for data in iniciales:
             inst = InstalacionDB(**data)
             db.session.add(inst)
         db.session.commit()
     else:
-        # Actualizar automáticamente si ya existía en la BD con el nombre antiguo
+        # Actualizar nombres antiguos si existían
         inst_prueba = InstalacionDB.query.filter_by(nombre="RONDA PRUEBA FINAL").first()
         if inst_prueba:
             inst_prueba.nombre = "RONDA - ARAMARK ATACAMA"
+            db.session.commit()
+        
+        # Asegurar que Alpes exista
+        if not InstalacionDB.query.filter_by(nombre="RONDA - ARAMARK ALPES").first():
+            db.session.add(InstalacionDB(nombre="RONDA - ARAMARK ALPES", comuna="Santiago", lat=-33.4489, lng=-70.6693, rondas=0, meta_rondas=3))
             db.session.commit()
 
 def limpiar_texto(texto):
