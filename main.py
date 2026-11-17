@@ -167,7 +167,6 @@ def verificar_y_actualizar_turnos():
             db.session.commit()
     except Exception as e:
         db.session.rollback()
-        print(f"Error en turnos: {e}")
 
 def buscar_instalacion_en_texto(instalaciones, texto_limpio):
     texto_sin_espacios = texto_limpio.replace(" ", "")
@@ -215,24 +214,31 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         mail_password = os.getenv('MAIL_PASSWORD')
 
         if not mail_user or not mail_password:
-            return False, "Faltan variables MAIL_USER o MAIL_PASSWORD en Render", 0
+            return False, "Faltan variables MAIL_USER o MAIL_PASSWORD", 0
 
         ultimo_chequeo_imap = time.time()
 
-        mail = imaplib.IMAP4_SSL(mail_server, timeout=15)
+        mail = imaplib.IMAP4_SSL(mail_server, timeout=20)
         mail.login(mail_user, mail_password)
         status, messages = mail.select('INBOX', readonly=True)
         
         if status != 'OK':
-            mail.logout()
+            try:
+                mail.logout()
+            except Exception:
+                pass
             return False, "No se pudo abrir INBOX", 0
 
         total_correos = int(messages[0])
         if total_correos == 0:
-            mail.logout()
+            try:
+                mail.logout()
+            except Exception:
+                pass
             return True, "Bandeja vacía", 0
 
-        inicio = max(1, total_correos - 149)
+        # Lote seguro de lectura para evitar timeouts
+        inicio = max(1, total_correos - 79)
         rango_lote = f"{inicio}:{total_correos}"
 
         status, data = mail.fetch(rango_lote, '(RFC822)')
@@ -266,138 +272,133 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 if not raw_msg:
                     continue
 
-                msg = email.message_from_bytes(raw_msg)
-                asunto = decodificar_encabezado(msg.get('Subject', ''))
-                remitente = decodificar_encabezado(msg.get('From', ''))
-                msg_id = (msg.get('Message-ID') or '').strip()
-                date_hdr = decodificar_encabezado(msg.get('Date', ''))
-
-                if not asunto or not date_hdr:
-                    continue
-
                 try:
+                    msg = email.message_from_bytes(raw_msg)
+                    asunto = decodificar_encabezado(msg.get('Subject', ''))
+                    remitente = decodificar_encabezado(msg.get('From', ''))
+                    msg_id = (msg.get('Message-ID') or '').strip()
+                    date_hdr = decodificar_encabezado(msg.get('Date', ''))
+
+                    if not asunto or not date_hdr:
+                        continue
+
                     dt_correo = parsedate_to_datetime(date_hdr)
                     if dt_correo.tzinfo is None:
                         dt_correo = pytz.utc.localize(dt_correo)
                     dt_correo_chile = dt_correo.astimezone(chile_tz)
-                except Exception:
-                    continue
 
-                turno_cod_correo, turno_label_correo, _ = calcular_info_turno(dt_correo_chile)
-                fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
+                    turno_cod_correo, turno_label_correo, _ = calcular_info_turno(dt_correo_chile)
+                    fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
-                cuerpo_texto = ""
-                cuerpo_html = ""
-                pdf_base64 = ""
-                nombre_pdf = ""
+                    cuerpo_texto = ""
+                    cuerpo_html = ""
+                    pdf_base64 = ""
+                    nombre_pdf = ""
 
-                for part_m in msg.walk():
-                    content_type = part_m.get_content_type()
-                    filename = part_m.get_filename()
-                    if filename:
-                        filename = decodificar_encabezado(filename)
+                    for part_m in msg.walk():
+                        content_type = part_m.get_content_type()
+                        filename = part_m.get_filename()
+                        if filename:
+                            filename = decodificar_encabezado(filename)
 
-                    try:
-                        payload_bytes = part_m.get_payload(decode=True)
-                        if payload_bytes and (payload_bytes.startswith(b'%PDF') or (filename and filename.lower().endswith('.pdf'))):
-                            pdf_base64 = base64.b64encode(payload_bytes).decode('utf-8')
-                            nombre_pdf = filename or "reporte_kizeo.pdf"
-                    except Exception:
-                        pass
-
-                    if content_type == "text/plain" and not cuerpo_texto:
                         try:
-                            payload = part_m.get_payload(decode=True)
-                            charset = part_m.get_content_charset() or 'utf-8'
-                            cuerpo_texto = payload.decode(charset, errors='ignore')
-                        except Exception:
-                            pass
-                    elif content_type == "text/html" and not cuerpo_html:
-                        try:
-                            payload = part_m.get_payload(decode=True)
-                            charset = part_m.get_content_charset() or 'utf-8'
-                            cuerpo_html = payload.decode(charset, errors='ignore')
+                            payload_bytes = part_m.get_payload(decode=True)
+                            if payload_bytes and (payload_bytes.startswith(b'%PDF') or (filename and filename.lower().endswith('.pdf'))):
+                                pdf_base64 = base64.b64encode(payload_bytes).decode('utf-8')
+                                nombre_pdf = filename or "reporte_kizeo.pdf"
                         except Exception:
                             pass
 
-                if cuerpo_html:
-                    texto_desde_html = extraer_texto_html(cuerpo_html)
+                        if content_type == "text/plain" and not cuerpo_texto:
+                            try:
+                                payload = part_m.get_payload(decode=True)
+                                charset = part_m.get_content_charset() or 'utf-8'
+                                cuerpo_texto = payload.decode(charset, errors='ignore')
+                            except Exception:
+                                pass
+                        elif content_type == "text/html" and not cuerpo_html:
+                            try:
+                                payload = part_m.get_payload(decode=True)
+                                charset = part_m.get_content_charset() or 'utf-8'
+                                cuerpo_html = payload.decode(charset, errors='ignore')
+                            except Exception:
+                                pass
+
+                    if cuerpo_html:
+                        texto_desde_html = extraer_texto_html(cuerpo_html)
+                        if not cuerpo_texto:
+                            cuerpo_texto = texto_desde_html
+                        else:
+                            cuerpo_texto += "\n" + texto_desde_html
+
                     if not cuerpo_texto:
-                        cuerpo_texto = texto_desde_html
-                    else:
-                        cuerpo_texto += "\n" + texto_desde_html
+                        cuerpo_texto = asunto
 
-                if not cuerpo_texto:
-                    cuerpo_texto = asunto
+                    nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
+                    asunto_limpio = limpiar_texto(asunto)
+                    remitente_limpio = limpiar_texto(nombre_remitente)
+                    cuerpo_limpio = limpiar_texto(cuerpo_texto)
+                    texto_busqueda = f"{asunto_limpio} {remitente_limpio} {cuerpo_limpio}"
 
-                nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
-                asunto_limpio = limpiar_texto(asunto)
-                remitente_limpio = limpiar_texto(nombre_remitente)
-                cuerpo_limpio = limpiar_texto(cuerpo_texto)
-                texto_busqueda = f"{asunto_limpio} {remitente_limpio} {cuerpo_limpio}"
+                    if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
+                        continue
 
-                # LOG DE DEPURACIÓN EN RENDER
-                print(f"--- LEYENDO CORREO --- Asunto: {asunto}")
-                print(f"Texto Búsqueda: {texto_busqueda[:150]}...")
+                    uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}-{fecha_correo_str}"
+                    if uid_unico in ids_existentes and not forzar_reconteo:
+                        continue
 
-                if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
+                    tiene_pdf_bool = bool(pdf_base64)
+                    inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
+
+                    if inst_obj:
+                        es_novedad = "alerta" in texto_busqueda or "novedad" in texto_busqueda
+
+                        if es_novedad:
+                            nombre_inst = inst_obj.nombre.replace("RONDA - ", "")
+                            nuevo_rep = ReporteKizeo(
+                                form_id=uid_unico,
+                                usuario=f"⚠️ ALERTA ({nombre_inst})",
+                                fecha_envio=fecha_correo_str,
+                                datos_json=json.dumps({
+                                    "tipo": "NOVEDAD",
+                                    "instalacion": nombre_inst,
+                                    "asunto": asunto,
+                                    "cuerpo": cuerpo_texto[:3000],
+                                    "tiene_pdf": tiene_pdf_bool,
+                                    "pdf_base64": pdf_base64,
+                                    "nombre_pdf": nombre_pdf,
+                                    "remitente": nombre_remitente,
+                                    "turno_codigo": turno_cod_correo,
+                                    "turno_etiqueta": turno_label_correo
+                                }, ensure_ascii=False)
+                            )
+                            db.session.add(nuevo_rep)
+                            ids_existentes.add(uid_unico)
+                            procesados += 1
+                        else:
+                            nuevo_rep = ReporteKizeo(
+                                form_id=uid_unico,
+                                usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
+                                fecha_envio=fecha_correo_str,
+                                datos_json=json.dumps({
+                                    "tipo": "RONDA",
+                                    "instalacion": inst_obj.nombre,
+                                    "asunto": asunto,
+                                    "cuerpo": cuerpo_texto[:3000],
+                                    "tiene_pdf": tiene_pdf_bool,
+                                    "pdf_base64": pdf_base64,
+                                    "nombre_pdf": nombre_pdf,
+                                    "remitente": nombre_remitente,
+                                    "turno_codigo": turno_cod_correo,
+                                    "turno_etiqueta": turno_label_correo
+                                }, ensure_ascii=False)
+                            )
+                            db.session.add(nuevo_rep)
+                            ids_existentes.add(uid_unico)
+                            procesados += 1
+                except Exception as inner_err:
+                    print(f"Error procesando correo individual: {inner_err}")
                     continue
-
-                uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}-{fecha_correo_str}"
-                if uid_unico in ids_existentes and not forzar_reconteo:
-                    continue
-
-                tiene_pdf_bool = bool(pdf_base64)
-                inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
-                
-                print(f"-> Instalación detectada: {inst_obj.nombre if inst_obj else 'NINGUNA'}")
-
-                if inst_obj:
-                    es_novedad = "alerta" in texto_busqueda or "novedad" in texto_busqueda
-
-                    if es_novedad:
-                        nombre_inst = inst_obj.nombre.replace("RONDA - ", "")
-                        nuevo_rep = ReporteKizeo(
-                            form_id=uid_unico,
-                            usuario=f"⚠️ ALERTA ({nombre_inst})",
-                            fecha_envio=fecha_correo_str,
-                            datos_json=json.dumps({
-                                "tipo": "NOVEDAD",
-                                "instalacion": nombre_inst,
-                                "asunto": asunto,
-                                "cuerpo": cuerpo_texto[:3000],
-                                "tiene_pdf": tiene_pdf_bool,
-                                "pdf_base64": pdf_base64,
-                                "nombre_pdf": nombre_pdf,
-                                "remitente": nombre_remitente,
-                                "turno_codigo": turno_cod_correo,
-                                "turno_etiqueta": turno_label_correo
-                            }, ensure_ascii=False)
-                        )
-                        db.session.add(nuevo_rep)
-                        ids_existentes.add(uid_unico)
-                        procesados += 1
-                    else:
-                        nuevo_rep = ReporteKizeo(
-                            form_id=uid_unico,
-                            usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
-                            fecha_envio=fecha_correo_str,
-                            datos_json=json.dumps({
-                                "tipo": "RONDA",
-                                "instalacion": inst_obj.nombre,
-                                "asunto": asunto,
-                                "cuerpo": cuerpo_texto[:3000],
-                                "tiene_pdf": tiene_pdf_bool,
-                                "pdf_base64": pdf_base64,
-                                "nombre_pdf": nombre_pdf,
-                                "remitente": nombre_remitente,
-                                "turno_codigo": turno_cod_correo,
-                                "turno_etiqueta": turno_label_correo
-                            }, ensure_ascii=False)
-                        )
-                        db.session.add(nuevo_rep)
-                        ids_existentes.add(uid_unico)
-                        procesados += 1
 
         db.session.commit()
         recalcular_contadores_turno_actual()
