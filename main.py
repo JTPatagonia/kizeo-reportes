@@ -103,6 +103,13 @@ def limpiar_texto(texto):
     texto_limpio = re.sub(r'[^a-zA-Z0-9\s]', ' ', texto_norm)
     return re.sub(r'\s+', ' ', texto_limpio).lower().strip()
 
+def extraer_texto_html(html_content):
+    if not html_content:
+        return ""
+    # Remover etiquetas HTML y dejar texto limpio
+    sin_tags = re.sub(r'<[^>]+>', ' ', html_content)
+    return re.sub(r'\s+', ' ', sin_tags).strip()
+
 def decodificar_encabezado(valor):
     if not valor:
         return ""
@@ -158,11 +165,15 @@ def verificar_y_actualizar_turnos():
         print(f"Error en turnos: {e}")
 
 def buscar_instalacion_en_texto(instalaciones, texto_limpio):
+    texto_sin_espacios = texto_limpio.replace(" ", "")
     for inst in instalaciones:
         nombre_sin_prefijo = inst.nombre.replace("RONDA - ", "").replace("RONDA", "").strip()
         palabras_clave = [p for p in limpiar_texto(nombre_sin_prefijo).split() if len(p) > 2]
-        if palabras_clave and all(p in texto_limpio for p in palabras_clave):
-            return inst
+        if palabras_clave:
+            match_normal = all(p in texto_limpio for p in palabras_clave)
+            match_unido = "".join(palabras_clave) in texto_sin_espacios
+            if match_normal or match_unido:
+                return inst
     return None
 
 def recalcular_contadores_turno_actual():
@@ -268,6 +279,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
                 cuerpo_texto = ""
+                cuerpo_html = ""
                 pdf_base64 = ""
                 nombre_pdf = ""
 
@@ -292,6 +304,21 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             cuerpo_texto = payload.decode(charset, errors='ignore')
                         except Exception:
                             pass
+                    elif content_type == "text/html" and not cuerpo_html:
+                        try:
+                            payload = part_m.get_payload(decode=True)
+                            charset = part_m.get_content_charset() or 'utf-8'
+                            cuerpo_html = payload.decode(charset, errors='ignore')
+                        except Exception:
+                            pass
+
+                # Extraer texto del HTML si el plano está vacío o incompleto
+                if cuerpo_html:
+                    texto_desde_html = extraer_texto_html(cuerpo_html)
+                    if not cuerpo_texto:
+                        cuerpo_texto = texto_desde_html
+                    else:
+                        cuerpo_texto += "\n" + texto_desde_html
 
                 if not cuerpo_texto:
                     cuerpo_texto = asunto
@@ -306,12 +333,10 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     continue
 
                 uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}-{fecha_correo_str}"
-                if uid_unico in ids_existentes:
+                if uid_unico in ids_existentes and not forzar_reconteo:
                     continue
 
                 tiene_pdf_bool = bool(pdf_base64)
-
-                # BARRIDO INTELIGENTE: Si el correo menciona alguna de nuestras instalaciones conocidas, se procesa automáticamente
                 inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
 
                 if inst_obj:
