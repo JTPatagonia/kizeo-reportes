@@ -106,7 +106,6 @@ def limpiar_texto(texto):
 def extraer_texto_html(html_content):
     if not html_content:
         return ""
-    # Remover etiquetas HTML y dejar texto limpio
     sin_tags = re.sub(r'<[^>]+>', ' ', html_content)
     return re.sub(r'\s+', ' ', sin_tags).strip()
 
@@ -168,11 +167,14 @@ def buscar_instalacion_en_texto(instalaciones, texto_limpio):
     texto_sin_espacios = texto_limpio.replace(" ", "")
     for inst in instalaciones:
         nombre_sin_prefijo = inst.nombre.replace("RONDA - ", "").replace("RONDA", "").strip()
-        palabras_clave = [p for p in limpiar_texto(nombre_sin_prefijo).split() if len(p) > 2]
+        palabras_clave = [limpiar_texto(p) for p in nombre_sin_prefijo.split() if len(p) > 2]
+        
         if palabras_clave:
-            match_normal = all(p in texto_limpio for p in palabras_clave)
-            match_unido = "".join(palabras_clave) in texto_sin_espacios
-            if match_normal or match_unido:
+            coincide_todas = all(p in texto_limpio for p in palabras_clave)
+            coincide_unido = "".join(palabras_clave) in texto_sin_espacios
+            coincide_principal = any(p in texto_limpio for p in palabras_clave if p not in ["aramark", "ronda", "icestar"])
+
+            if coincide_todas or coincide_unido or coincide_principal:
                 return inst
     return None
 
@@ -312,7 +314,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                         except Exception:
                             pass
 
-                # Extraer texto del HTML si el plano está vacío o incompleto
                 if cuerpo_html:
                     texto_desde_html = extraer_texto_html(cuerpo_html)
                     if not cuerpo_texto:
