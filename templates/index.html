@@ -815,17 +815,22 @@
             } catch (e) { console.log(e); }
         }
 
-        async function forzarVerificacion() {
+async function forzarVerificacion() {
             const btn = document.getElementById('btn-sync');
             const icono = document.getElementById('icono-sync');
             btn.disabled = true; icono.classList.add('fa-spin');
             try {
+                // Forzamos el reconteo (?reconteo=1) para que limpie y lea todo de nuevo con la nueva lógica
                 const res = await fetch('/api/verificar-correo?reconteo=1');
                 if(res.status===401){window.location.href='/login';return;}
                 await res.json();
                 segundosParaSync = 15;
-                await cargarDatosEnVivo(); await cargarHistorial();
-            } finally { btn.disabled = false; icono.classList.remove('fa-spin'); }
+                await cargarDatosEnVivo(); 
+                await cargarHistorial();
+            } finally { 
+                btn.disabled = false; 
+                icono.classList.remove('fa-spin'); 
+            }
         }
 
         async function cicloAutomatico() { await cargarDatosEnVivo(); await cargarHistorial(); }
