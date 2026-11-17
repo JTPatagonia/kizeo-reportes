@@ -109,12 +109,6 @@ def limpiar_texto(texto):
     texto_limpio = re.sub(r'[^a-zA-Z0-9\s]', ' ', texto_norm)
     return re.sub(r'\s+', ' ', texto_limpio).lower().strip()
 
-def extraer_texto_html(html_content):
-    if not html_content:
-        return ""
-    sin_tags = re.sub(r'<[^>]+>', ' ', html_content)
-    return re.sub(r'\s+', ' ', sin_tags).strip()
-
 def decodificar_encabezado(valor):
     if not valor:
         return ""
@@ -218,7 +212,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
 
         ultimo_chequeo_imap = time.time()
 
-        mail = imaplib.IMAP4_SSL(mail_server, timeout=20)
+        mail = imaplib.IMAP4_SSL(mail_server, timeout=15)
         mail.login(mail_user, mail_password)
         status, messages = mail.select('INBOX', readonly=True)
         
@@ -237,20 +231,9 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 pass
             return True, "Bandeja vacía", 0
 
-        # Lote seguro de lectura para evitar timeouts
-        inicio = max(1, total_correos - 79)
-        rango_lote = f"{inicio}:{total_correos}"
-
-        status, data = mail.fetch(rango_lote, '(RFC822)')
+        # Lote ultra-seguro y rápido (últimos 50 correos basados solo en Asunto y Fecha)
+        inicio = max(1, total_correos - 49)
         
-        try:
-            mail.logout()
-        except Exception:
-            pass
-
-        if status != 'OK' or not data:
-            return False, "No se pudieron obtener correos", 0
-
         chile_tz = pytz.timezone('America/Santiago')
         codigo_turno_actual, _, _ = obtener_datos_turno_actual()
 
@@ -264,141 +247,98 @@ def verificar_correos_kizeo(forzar_reconteo=False):
         instalaciones = InstalacionDB.query.all()
         ids_existentes = set(r.form_id for r in ReporteKizeo.query.all() if r.form_id)
 
-        idx = 0
-        for part in data:
-            if isinstance(part, tuple) and len(part) >= 2:
-                idx += 1
-                raw_msg = part[1]
-                if not raw_msg:
+        for i in range(inicio, total_correos + 1):
+            try:
+                res, msg_data = mail.fetch(str(i), '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE MESSAGE-ID)])')
+                if res != 'OK' or not msg_data:
                     continue
 
-                try:
-                    msg = email.message_from_bytes(raw_msg)
-                    asunto = decodificar_encabezado(msg.get('Subject', ''))
-                    remitente = decodificar_encabezado(msg.get('From', ''))
-                    msg_id = (msg.get('Message-ID') or '').strip()
-                    date_hdr = decodificar_encabezado(msg.get('Date', ''))
+                for response_part in msg_data:
+                    if isinstance(response_part, tuple):
+                        msg = email.message_from_bytes(response_part[1])
+                        asunto = decodificar_encabezado(msg.get('Subject', ''))
+                        remitente = decodificar_encabezado(msg.get('From', ''))
+                        msg_id = (msg.get('Message-ID') or '').strip()
+                        date_hdr = decodificar_encabezado(msg.get('Date', ''))
 
-                    if not asunto or not date_hdr:
-                        continue
+                        if not asunto or not date_hdr:
+                            continue
 
-                    dt_correo = parsedate_to_datetime(date_hdr)
-                    if dt_correo.tzinfo is None:
-                        dt_correo = pytz.utc.localize(dt_correo)
-                    dt_correo_chile = dt_correo.astimezone(chile_tz)
+                        dt_correo = parsedate_to_datetime(date_hdr)
+                        if dt_correo.tzinfo is None:
+                            dt_correo = pytz.utc.localize(dt_correo)
+                        dt_correo_chile = dt_correo.astimezone(chile_tz)
 
-                    turno_cod_correo, turno_label_correo, _ = calcular_info_turno(dt_correo_chile)
-                    fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
+                        turno_cod_correo, turno_label_correo, _ = calcular_info_turno(dt_correo_chile)
+                        fecha_correo_str = dt_correo_chile.strftime('%d/%m/%Y %H:%M:%S')
 
-                    cuerpo_texto = ""
-                    cuerpo_html = ""
-                    pdf_base64 = ""
-                    nombre_pdf = ""
+                        nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
+                        asunto_limpio = limpiar_texto(asunto)
+                        remitente_limpio = limpiar_texto(nombre_remitente)
+                        texto_busqueda = f"{asunto_limpio} {remitente_limpio}"
 
-                    for part_m in msg.walk():
-                        content_type = part_m.get_content_type()
-                        filename = part_m.get_filename()
-                        if filename:
-                            filename = decodificar_encabezado(filename)
+                        if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
+                            continue
 
-                        try:
-                            payload_bytes = part_m.get_payload(decode=True)
-                            if payload_bytes and (payload_bytes.startswith(b'%PDF') or (filename and filename.lower().endswith('.pdf'))):
-                                pdf_base64 = base64.b64encode(payload_bytes).decode('utf-8')
-                                nombre_pdf = filename or "reporte_kizeo.pdf"
-                        except Exception:
-                            pass
+                        uid_unico = msg_id if msg_id else f"correo-{i}-{asunto_limpio[:20]}"
+                        if uid_unico in ids_existentes and not forzar_reconteo:
+                            continue
 
-                        if content_type == "text/plain" and not cuerpo_texto:
-                            try:
-                                payload = part_m.get_payload(decode=True)
-                                charset = part_m.get_content_charset() or 'utf-8'
-                                cuerpo_texto = payload.decode(charset, errors='ignore')
-                            except Exception:
-                                pass
-                        elif content_type == "text/html" and not cuerpo_html:
-                            try:
-                                payload = part_m.get_payload(decode=True)
-                                charset = part_m.get_content_charset() or 'utf-8'
-                                cuerpo_html = payload.decode(charset, errors='ignore')
-                            except Exception:
-                                pass
+                        inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
 
-                    if cuerpo_html:
-                        texto_desde_html = extraer_texto_html(cuerpo_html)
-                        if not cuerpo_texto:
-                            cuerpo_texto = texto_desde_html
-                        else:
-                            cuerpo_texto += "\n" + texto_desde_html
+                        if inst_obj:
+                            es_novedad = "alerta" in texto_busqueda or "novedad" in texto_busqueda
 
-                    if not cuerpo_texto:
-                        cuerpo_texto = asunto
+                            if es_novedad:
+                                nombre_inst = inst_obj.nombre.replace("RONDA - ", "")
+                                nuevo_rep = ReporteKizeo(
+                                    form_id=uid_unico,
+                                    usuario=f"⚠️ ALERTA ({nombre_inst})",
+                                    fecha_envio=fecha_correo_str,
+                                    datos_json=json.dumps({
+                                        "tipo": "NOVEDAD",
+                                        "instalacion": nombre_inst,
+                                        "asunto": asunto,
+                                        "cuerpo": f"Reporte de alerta recibido por correo. Asunto: {asunto}",
+                                        "tiene_pdf": False,
+                                        "pdf_base64": "",
+                                        "nombre_pdf": "",
+                                        "remitente": nombre_remitente,
+                                        "turno_codigo": turno_cod_correo,
+                                        "turno_etiqueta": turno_label_correo
+                                    }, ensure_ascii=False)
+                                )
+                                db.session.add(nuevo_rep)
+                                ids_existentes.add(uid_unico)
+                                procesados += 1
+                            else:
+                                nuevo_rep = ReporteKizeo(
+                                    form_id=uid_unico,
+                                    usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
+                                    fecha_envio=fecha_correo_str,
+                                    datos_json=json.dumps({
+                                        "tipo": "RONDA",
+                                        "instalacion": inst_obj.nombre,
+                                        "asunto": asunto,
+                                        "cuerpo": f"Reporte de ronda recibido por correo. Asunto: {asunto}",
+                                        "tiene_pdf": False,
+                                        "pdf_base64": "",
+                                        "nombre_pdf": "",
+                                        "remitente": nombre_remitente,
+                                        "turno_codigo": turno_cod_correo,
+                                        "turno_etiqueta": turno_label_correo
+                                    }, ensure_ascii=False)
+                                )
+                                db.session.add(nuevo_rep)
+                                ids_existentes.add(uid_unico)
+                                procesados += 1
+            except Exception as single_err:
+                continue
 
-                    nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
-                    asunto_limpio = limpiar_texto(asunto)
-                    remitente_limpio = limpiar_texto(nombre_remitente)
-                    cuerpo_limpio = limpiar_texto(cuerpo_texto)
-                    texto_busqueda = f"{asunto_limpio} {remitente_limpio} {cuerpo_limpio}"
-
-                    if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
-                        continue
-
-                    uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}-{fecha_correo_str}"
-                    if uid_unico in ids_existentes and not forzar_reconteo:
-                        continue
-
-                    tiene_pdf_bool = bool(pdf_base64)
-                    inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
-
-                    if inst_obj:
-                        es_novedad = "alerta" in texto_busqueda or "novedad" in texto_busqueda
-
-                        if es_novedad:
-                            nombre_inst = inst_obj.nombre.replace("RONDA - ", "")
-                            nuevo_rep = ReporteKizeo(
-                                form_id=uid_unico,
-                                usuario=f"⚠️ ALERTA ({nombre_inst})",
-                                fecha_envio=fecha_correo_str,
-                                datos_json=json.dumps({
-                                    "tipo": "NOVEDAD",
-                                    "instalacion": nombre_inst,
-                                    "asunto": asunto,
-                                    "cuerpo": cuerpo_texto[:3000],
-                                    "tiene_pdf": tiene_pdf_bool,
-                                    "pdf_base64": pdf_base64,
-                                    "nombre_pdf": nombre_pdf,
-                                    "remitente": nombre_remitente,
-                                    "turno_codigo": turno_cod_correo,
-                                    "turno_etiqueta": turno_label_correo
-                                }, ensure_ascii=False)
-                            )
-                            db.session.add(nuevo_rep)
-                            ids_existentes.add(uid_unico)
-                            procesados += 1
-                        else:
-                            nuevo_rep = ReporteKizeo(
-                                form_id=uid_unico,
-                                usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
-                                fecha_envio=fecha_correo_str,
-                                datos_json=json.dumps({
-                                    "tipo": "RONDA",
-                                    "instalacion": inst_obj.nombre,
-                                    "asunto": asunto,
-                                    "cuerpo": cuerpo_texto[:3000],
-                                    "tiene_pdf": tiene_pdf_bool,
-                                    "pdf_base64": pdf_base64,
-                                    "nombre_pdf": nombre_pdf,
-                                    "remitente": nombre_remitente,
-                                    "turno_codigo": turno_cod_correo,
-                                    "turno_etiqueta": turno_label_correo
-                                }, ensure_ascii=False)
-                            )
-                            db.session.add(nuevo_rep)
-                            ids_existentes.add(uid_unico)
-                            procesados += 1
-                except Exception as inner_err:
-                    print(f"Error procesando correo individual: {inner_err}")
-                    continue
+        try:
+            mail.logout()
+        except Exception:
+            pass
 
         db.session.commit()
         recalcular_contadores_turno_actual()
