@@ -213,7 +213,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
             mail.logout()
             return True, "Bandeja vacía", 0
 
-        # AMPLIADO: Revisar los últimos 150 correos para asegurar que no se pierda ninguno
         inicio = max(1, total_correos - 149)
         rango_lote = f"{inicio}:{total_correos}"
 
@@ -300,7 +299,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
                 asunto_limpio = limpiar_texto(asunto)
                 remitente_limpio = limpiar_texto(nombre_remitente)
-                texto_busqueda = f"{asunto_limpio} {remitente_limpio} {limpiar_texto(cuerpo_texto)}"
+                cuerpo_limpio = limpiar_texto(cuerpo_texto)
+                texto_busqueda = f"{asunto_limpio} {remitente_limpio} {cuerpo_limpio}"
 
                 if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
                     continue
@@ -311,34 +311,35 @@ def verificar_correos_kizeo(forzar_reconteo=False):
 
                 tiene_pdf_bool = bool(pdf_base64)
 
-                if "alerta" in asunto_limpio or "novedad" in asunto_limpio:
-                    inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
-                    nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else (nombre_remitente or "General")
+                # BARRIDO INTELIGENTE: Si el correo menciona alguna de nuestras instalaciones conocidas, se procesa automáticamente
+                inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
 
-                    nuevo_rep = ReporteKizeo(
-                        form_id=uid_unico,
-                        usuario=f"⚠️ ALERTA ({nombre_inst})",
-                        fecha_envio=fecha_correo_str,
-                        datos_json=json.dumps({
-                            "tipo": "NOVEDAD",
-                            "instalacion": nombre_inst,
-                            "asunto": asunto,
-                            "cuerpo": cuerpo_texto[:3000],
-                            "tiene_pdf": tiene_pdf_bool,
-                            "pdf_base64": pdf_base64,
-                            "nombre_pdf": nombre_pdf,
-                            "remitente": nombre_remitente,
-                            "turno_codigo": turno_cod_correo,
-                            "turno_etiqueta": turno_label_correo
-                        }, ensure_ascii=False)
-                    )
-                    db.session.add(nuevo_rep)
-                    ids_existentes.add(uid_unico)
-                    procesados += 1
+                if inst_obj:
+                    es_novedad = "alerta" in texto_busqueda or "novedad" in texto_busqueda
 
-                elif "ronda" in asunto_limpio:
-                    inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
-                    if inst_obj:
+                    if es_novedad:
+                        nombre_inst = inst_obj.nombre.replace("RONDA - ", "")
+                        nuevo_rep = ReporteKizeo(
+                            form_id=uid_unico,
+                            usuario=f"⚠️ ALERTA ({nombre_inst})",
+                            fecha_envio=fecha_correo_str,
+                            datos_json=json.dumps({
+                                "tipo": "NOVEDAD",
+                                "instalacion": nombre_inst,
+                                "asunto": asunto,
+                                "cuerpo": cuerpo_texto[:3000],
+                                "tiene_pdf": tiene_pdf_bool,
+                                "pdf_base64": pdf_base64,
+                                "nombre_pdf": nombre_pdf,
+                                "remitente": nombre_remitente,
+                                "turno_codigo": turno_cod_correo,
+                                "turno_etiqueta": turno_label_correo
+                            }, ensure_ascii=False)
+                        )
+                        db.session.add(nuevo_rep)
+                        ids_existentes.add(uid_unico)
+                        procesados += 1
+                    else:
                         nuevo_rep = ReporteKizeo(
                             form_id=uid_unico,
                             usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
@@ -647,48 +648,45 @@ def recibir_webhook():
             instalaciones = InstalacionDB.query.all()
             inst_obj = buscar_instalacion_en_texto(instalaciones, texto_webhook)
             
-            if es_novedad:
-                nombre_inst = inst_obj.nombre.replace("RONDA - ", "") if inst_obj else "General"
-                nuevo_reporte = ReporteKizeo(
-                    form_id=form_id,
-                    usuario=f"⚠️ ALERTA ({nombre_inst})",
-                    fecha_envio=str(fecha),
-                    datos_json=json.dumps({
-                        "tipo": "NOVEDAD",
-                        "instalacion": nombre_inst,
-                        "asunto": form_name,
-                        "cuerpo": json.dumps(content, ensure_ascii=False),
-                        "tiene_pdf": False,
-                        "pdf_base64": "",
-                        "nombre_pdf": "",
-                        "remitente": usuario,
-                        "turno_codigo": turno_cod,
-                        "turno_etiqueta": turno_label
-                    }, ensure_ascii=False)
-                )
-                db.session.add(nuevo_reporte)
-                db.session.commit()
-            else:
-                nombre_inst = inst_obj.nombre if inst_obj else "Instalación"
-                if inst_obj:
+            if inst_obj:
+                if es_novedad:
+                    nombre_inst = inst_obj.nombre.replace("RONDA - ", "")
+                    nuevo_reporte = ReporteKizeo(
+                        form_id=form_id,
+                        usuario=f"⚠️ ALERTA ({nombre_inst})",
+                        fecha_envio=str(fecha),
+                        datos_json=json.dumps({
+                            "tipo": "NOVEDAD",
+                            "instalacion": nombre_inst,
+                            "asunto": form_name,
+                            "cuerpo": json.dumps(content, ensure_ascii=False),
+                            "tiene_pdf": False,
+                            "pdf_base64": "",
+                            "nombre_pdf": "",
+                            "remitente": usuario,
+                            "turno_codigo": turno_cod,
+                            "turno_etiqueta": turno_label
+                        }, ensure_ascii=False)
+                    )
+                else:
                     inst_obj.rondas += 1
-                nuevo_reporte = ReporteKizeo(
-                    form_id=form_id,
-                    usuario=str(usuario),
-                    fecha_envio=str(fecha),
-                    datos_json=json.dumps({
-                        "tipo": "RONDA",
-                        "instalacion": nombre_inst,
-                        "asunto": form_name,
-                        "cuerpo": json.dumps(content, ensure_ascii=False),
-                        "tiene_pdf": False,
-                        "pdf_base64": "",
-                        "nombre_pdf": "",
-                        "remitente": usuario,
-                        "turno_codigo": turno_cod,
-                        "turno_etiqueta": turno_label
-                    }, ensure_ascii=False)
-                )
+                    nuevo_reporte = ReporteKizeo(
+                        form_id=form_id,
+                        usuario=str(usuario),
+                        fecha_envio=str(fecha),
+                        datos_json=json.dumps({
+                            "tipo": "RONDA",
+                            "instalacion": inst_obj.nombre,
+                            "asunto": form_name,
+                            "cuerpo": json.dumps(content, ensure_ascii=False),
+                            "tiene_pdf": False,
+                            "pdf_base64": "",
+                            "nombre_pdf": "",
+                            "remitente": usuario,
+                            "turno_codigo": turno_cod,
+                            "turno_etiqueta": turno_label
+                        }, ensure_ascii=False)
+                    )
                 db.session.add(nuevo_reporte)
                 db.session.commit()
 
