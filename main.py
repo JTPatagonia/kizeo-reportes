@@ -77,7 +77,6 @@ with app.app_context():
         db.session.add(admin)
         db.session.commit()
 
-    # MIGRACIÓN AUTOMÁTICA: Asegurar que todas las instalaciones oficiales existan en la BD de Render
     oficiales = [
         { "nombre": "RONDA - ARAMARK ACONCAGUA", "comuna": "Colina", "lat": -33.2000, "lng": -70.6700, "meta_rondas": 3 },
         { "nombre": "RONDA - ARAMARK ALPES", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "meta_rondas": 3 },
@@ -337,6 +336,10 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 cuerpo_limpio = limpiar_texto(cuerpo_texto)
                 texto_busqueda = f"{asunto_limpio} {remitente_limpio} {cuerpo_limpio}"
 
+                # LOG DE DEPURACIÓN EN RENDER
+                print(f"--- LEYENDO CORREO --- Asunto: {asunto}")
+                print(f"Texto Búsqueda: {texto_busqueda[:150]}...")
+
                 if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
                     continue
 
@@ -346,6 +349,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
 
                 tiene_pdf_bool = bool(pdf_base64)
                 inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
+                
+                print(f"-> Instalación detectada: {inst_obj.nombre if inst_obj else 'NINGUNA'}")
 
                 if inst_obj:
                     es_novedad = "alerta" in texto_busqueda or "novedad" in texto_busqueda
