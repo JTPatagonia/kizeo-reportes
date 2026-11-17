@@ -95,17 +95,6 @@ with app.app_context():
             inst = InstalacionDB(**data)
             db.session.add(inst)
         db.session.commit()
-    else:
-        # Actualizar nombres antiguos si existían
-        inst_prueba = InstalacionDB.query.filter_by(nombre="RONDA PRUEBA FINAL").first()
-        if inst_prueba:
-            inst_prueba.nombre = "RONDA - ARAMARK ATACAMA"
-            db.session.commit()
-        
-        # Asegurar que Alpes exista
-        if not InstalacionDB.query.filter_by(nombre="RONDA - ARAMARK ALPES").first():
-            db.session.add(InstalacionDB(nombre="RONDA - ARAMARK ALPES", comuna="Santiago", lat=-33.4489, lng=-70.6693, rondas=0, meta_rondas=3))
-            db.session.commit()
 
 def limpiar_texto(texto):
     if not texto:
@@ -224,7 +213,8 @@ def verificar_correos_kizeo(forzar_reconteo=False):
             mail.logout()
             return True, "Bandeja vacía", 0
 
-        inicio = max(1, total_correos - 39)
+        # AMPLIADO: Revisar los últimos 150 correos para asegurar que no se pierda ninguno
+        inicio = max(1, total_correos - 149)
         rango_lote = f"{inicio}:{total_correos}"
 
         status, data = mail.fetch(rango_lote, '(RFC822)')
@@ -310,7 +300,7 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 nombre_remitente = re.sub(r'<[^>]+>', '', remitente).strip()
                 asunto_limpio = limpiar_texto(asunto)
                 remitente_limpio = limpiar_texto(nombre_remitente)
-                texto_busqueda = f"{asunto_limpio} {remitente_limpio}"
+                texto_busqueda = f"{asunto_limpio} {remitente_limpio} {limpiar_texto(cuerpo_texto)}"
 
                 if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
                     continue
@@ -349,9 +339,6 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 elif "ronda" in asunto_limpio:
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
                     if inst_obj:
-                        if turno_cod_correo == codigo_turno_actual:
-                            inst_obj.rondas += 1
-
                         nuevo_rep = ReporteKizeo(
                             form_id=uid_unico,
                             usuario=f"Guardia / {inst_obj.nombre.replace('RONDA - ', '')}",
