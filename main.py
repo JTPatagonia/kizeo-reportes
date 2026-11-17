@@ -77,24 +77,31 @@ with app.app_context():
         db.session.add(admin)
         db.session.commit()
 
-    if InstalacionDB.query.count() == 0:
-        iniciales = [
-            { "nombre": "RONDA - ARAMARK ACONCAGUA", "comuna": "Colina", "lat": -33.2000, "lng": -70.6700, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - ARAMARK ALPES", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - ARAMARK ATACAMA", "comuna": "Santiago", "lat": -33.4500, "lng": -70.6750, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - ARAMARK CONCEPCION", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - DESCO", "comuna": "Pudahuel", "lat": -33.4312, "lng": -70.8012, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - DITALCAR", "comuna": "Maipú", "lat": -33.5100, "lng": -70.7500, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - GILI", "comuna": "San Bernardo", "lat": -33.5900, "lng": -70.7000, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - ICESTAR PUDAHUEL", "comuna": "Pudahuel", "lat": -33.4111, "lng": -70.7922, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - ICESTAR QUILICURA", "comuna": "Quilicura", "lat": -33.3666, "lng": -70.7333, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - MEGAFRIO RENCA", "comuna": "Renca", "lat": -33.4034, "lng": -70.7185, "rondas": 0, "meta_rondas": 3 },
-            { "nombre": "RONDA - UNIPACK", "comuna": "Conchalí", "lat": -33.3800, "lng": -70.6700, "rondas": 0, "meta_rondas": 3 }
-        ]
-        for data in iniciales:
-            inst = InstalacionDB(**data)
-            db.session.add(inst)
+    # MIGRACIÓN AUTOMÁTICA: Asegurar que todas las instalaciones oficiales existan en la BD de Render
+    oficiales = [
+        { "nombre": "RONDA - ARAMARK ACONCAGUA", "comuna": "Colina", "lat": -33.2000, "lng": -70.6700, "meta_rondas": 3 },
+        { "nombre": "RONDA - ARAMARK ALPES", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "meta_rondas": 3 },
+        { "nombre": "RONDA - ARAMARK ATACAMA", "comuna": "Santiago", "lat": -33.4500, "lng": -70.6750, "meta_rondas": 3 },
+        { "nombre": "RONDA - ARAMARK CONCEPCION", "comuna": "Santiago", "lat": -33.4489, "lng": -70.6693, "meta_rondas": 3 },
+        { "nombre": "RONDA - DESCO", "comuna": "Pudahuel", "lat": -33.4312, "lng": -70.8012, "meta_rondas": 3 },
+        { "nombre": "RONDA - DITALCAR", "comuna": "Maipú", "lat": -33.5100, "lng": -70.7500, "meta_rondas": 3 },
+        { "nombre": "RONDA - GILI", "comuna": "San Bernardo", "lat": -33.5900, "lng": -70.7000, "meta_rondas": 3 },
+        { "nombre": "RONDA - ICESTAR PUDAHUEL", "comuna": "Pudahuel", "lat": -33.4111, "lng": -70.7922, "meta_rondas": 3 },
+        { "nombre": "RONDA - ICESTAR QUILICURA", "comuna": "Quilicura", "lat": -33.3666, "lng": -70.7333, "meta_rondas": 3 },
+        { "nombre": "RONDA - MEGAFRIO RENCA", "comuna": "Renca", "lat": -33.4034, "lng": -70.7185, "meta_rondas": 3 },
+        { "nombre": "RONDA - UNIPACK", "comuna": "Conchalí", "lat": -33.3800, "lng": -70.6700, "meta_rondas": 3 }
+    ]
+
+    inst_prueba = InstalacionDB.query.filter_by(nombre="RONDA PRUEBA FINAL").first()
+    if inst_prueba:
+        inst_prueba.nombre = "RONDA - ARAMARK ATACAMA"
         db.session.commit()
+
+    for data in oficiales:
+        existe = InstalacionDB.query.filter_by(nombre=data["nombre"]).first()
+        if not existe:
+            db.session.add(InstalacionDB(**data))
+    db.session.commit()
 
 def limpiar_texto(texto):
     if not texto:

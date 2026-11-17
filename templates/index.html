@@ -820,7 +820,7 @@
             const icono = document.getElementById('icono-sync');
             btn.disabled = true; icono.classList.add('fa-spin');
             try {
-                const res = await fetch('/api/verificar-correo');
+                const res = await fetch('/api/verificar-correo?reconteo=1');
                 if(res.status===401){window.location.href='/login';return;}
                 await res.json();
                 segundosParaSync = 15;
