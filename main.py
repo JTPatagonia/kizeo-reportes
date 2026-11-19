@@ -231,25 +231,24 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                 pass
             return True, "Bandeja vacía", 0
 
-        # Lote ultra-seguro por petición única (batch fetch)
-        inicio = max(1, total_correos - 49)
+        # Leer últimos 250 correos sin borrar el historial previo de la base de datos
+        inicio = max(1, total_correos - 249)
         rango_lote = f"{inicio}:{total_correos}"
 
         status, data = mail.fetch(rango_lote, '(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE MESSAGE-ID)])')
         
-        try:
-            mail.logout()
-        except Exception:
-            pass
-
         if status != 'OK' or not data:
+            try:
+                mail.logout()
+            except Exception:
+                pass
             return False, "No se pudieron obtener correos", 0
 
         chile_tz = pytz.timezone('America/Santiago')
         codigo_turno_actual, _, _ = obtener_datos_turno_actual()
 
+        # NO borramos ReporteKizeo para conservar todos los días anteriores en el historial
         if forzar_reconteo:
-            ReporteKizeo.query.delete()
             for inst in InstalacionDB.query.all():
                 inst.rondas = 0
                 inst.turno_activo = codigo_turno_actual
@@ -288,14 +287,37 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                     if any(x in texto_busqueda for x in ["alerta de seguridad", "finish setting up", "verificacion", "google", "render"]):
                         continue
 
-                    uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}"
-                    if uid_unico in ids_existentes and not forzar_reconteo:
+                    uid_unico = msg_id if msg_id else f"lote-{idx}-{asunto_limpio[:25]}-{fecha_correo_str}"
+                    if uid_unico in ids_existentes:
                         continue
 
                     inst_obj = buscar_instalacion_en_texto(instalaciones, texto_busqueda)
 
                     if inst_obj:
                         es_novedad = "alerta" in texto_busqueda or "novedad" in texto_busqueda
+
+                        pdf_base64 = ""
+                        nombre_pdf = ""
+
+                        if es_novedad:
+                            try:
+                                num_correo = response_part[0].split()[0]
+                                _, full_data = mail.fetch(num_correo, '(RFC822)')
+                                if full_data and isinstance(full_data[0], tuple):
+                                    full_msg = email.message_from_bytes(full_data[0][1])
+                                    for part_m in full_msg.walk():
+                                        filename = part_m.get_filename()
+                                        if filename:
+                                            filename = decodificar_encabezado(filename)
+                                        payload_bytes = part_m.get_payload(decode=True)
+                                        if payload_bytes and (payload_bytes.startswith(b'%PDF') or (filename and filename.lower().endswith('.pdf'))):
+                                            pdf_base64 = base64.b64encode(payload_bytes).decode('utf-8')
+                                            nombre_pdf = filename or "alerta_kizeo.pdf"
+                                            break
+                            except Exception:
+                                pass
+
+                        tiene_pdf_bool = bool(pdf_base64)
 
                         if es_novedad:
                             nombre_inst = inst_obj.nombre.replace("RONDA - ", "")
@@ -307,10 +329,10 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                                     "tipo": "NOVEDAD",
                                     "instalacion": nombre_inst,
                                     "asunto": asunto,
-                                    "cuerpo": f"Reporte recibido por correo. Asunto: {asunto}",
-                                    "tiene_pdf": False,
-                                    "pdf_base64": "",
-                                    "nombre_pdf": "",
+                                    "cuerpo": f"Reporte de alerta recibido por correo. Asunto: {asunto}",
+                                    "tiene_pdf": tiene_pdf_bool,
+                                    "pdf_base64": pdf_base64,
+                                    "nombre_pdf": nombre_pdf,
                                     "remitente": nombre_remitente,
                                     "turno_codigo": turno_cod_correo,
                                     "turno_etiqueta": turno_label_correo
@@ -340,8 +362,13 @@ def verificar_correos_kizeo(forzar_reconteo=False):
                             db.session.add(nuevo_rep)
                             ids_existentes.add(uid_unico)
                             procesados += 1
-                except Exception as inner_err:
+                except Exception:
                     continue
+
+        try:
+            mail.logout()
+        except Exception:
+            pass
 
         db.session.commit()
         recalcular_contadores_turno_actual()
@@ -510,7 +537,7 @@ def obtener_historial():
         return jsonify({"error": "No autorizado"}), 401
     try:
         codigo_actual, etiqueta_actual, _ = obtener_datos_turno_actual()
-        reportes = ReporteKizeo.query.order_by(ReporteKizeo.id.desc()).limit(200).all()
+        reportes = ReporteKizeo.query.order_by(ReporteKizeo.id.desc()).limit(1000).all()
         historial = [{
             "id": r.id,
             "form_id": r.form_id,
